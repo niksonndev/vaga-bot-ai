@@ -5,7 +5,30 @@ const LINKEDIN_USER_AGENT =
 
 const LINKEDIN_JOBS_SEARCH_URL = 'https://www.linkedin.com/jobs/search/';
 
-function buildSearchUrl(query: string, start = 0): string {
+// Palavras-chave pré-definidas para buscas comuns no LinkedIn.
+// A chave é um identificador "amigável" e o valor é a query enviada em `keywords`.
+export const SEARCH_KEYWORDS = {
+  gtm: 'Google Tag Manager',
+  digitalAnalytics: 'Digital Analytics',
+  webAnalytics: 'Web Analytics',
+  ga4Gtm: 'GA4 GTM',
+  analyticsEngineer: 'Analytics Engineer',
+  reactDeveloper: 'React Developer',
+  frontendReactTs: 'Frontend React TypeScript',
+  nextJsDeveloper: 'Next.js Developer',
+  frontendEngineer: 'Frontend Engineer',
+  reactTs: 'React TypeScript',
+} as const;
+
+type SearchKeywordKey = keyof typeof SEARCH_KEYWORDS;
+
+function resolveQuery(query: string): string {
+  const key = query as SearchKeywordKey;
+  return SEARCH_KEYWORDS[key] ?? query;
+}
+
+function buildSearchUrl(rawQuery: string, start = 0): string {
+  const query = resolveQuery(rawQuery);
   const params = new URLSearchParams({
     keywords: query,
     location: 'Brazil',

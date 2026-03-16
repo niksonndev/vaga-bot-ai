@@ -1,6 +1,6 @@
 ## VagaBot AI
 
-Agente de IA em Node + TypeScript que lê uma vaga do LinkedIn, analisa compatibilidade com o seu currículo, reescreve o currículo otimizado para ATS e gera um email de candidatura pronto para enviar.
+Agente de IA em Node + TypeScript que lê uma vaga do LinkedIn, analisa compatibilidade com o seu currículo e reescreve o currículo otimizado para ATS. Opcionalmente, pode gerar um email de candidatura pronto para enviar.
 
 ### Ideia geral
 
@@ -32,7 +32,7 @@ vaga-bot-ai/
 │   ├── search.ts     # busca pública de vagas no LinkedIn (lista de URLs canônicas)
 │   ├── analyzer.ts   # analisa compatibilidade currículo x vaga (JSON, score, keywords)
 │   ├── adapter.ts    # reescreve currículo otimizado para ATS e salva .md
-│   ├── composer.ts   # gera email de candidatura e salva .txt
+│   ├── composer.ts   # (opcional) gera email de candidatura e salva .txt
 │   ├── storage.ts    # storage local em SQLite para URLs de vagas (deduplicação)
 │   └── index.ts      # CLI que orquestra tudo (URL única ou busca em lote)
 ├── data/
@@ -90,7 +90,7 @@ export interface AnalysisResult {
      - `data/outputs/{company-slug}-{YYYY-MM-DD}-resume.md`
    - Retorna o currículo reescrito como `string`.
 
-4. **Composer (`composer.ts`)**
+4. **Composer (`composer.ts`)** (opcional, atualmente desabilitado no fluxo padrão)
    - Entrada: `composeEmail(job: JobData, analysis: AnalysisResult): Promise<string>`.
    - Usa um modelo mais barato (`gpt-4.1-mini` / gpt‑4o‑mini equivalente).
    - Prompt do sistema orientado a:
@@ -119,7 +119,7 @@ export interface AnalysisResult {
              - `⚠️  Vaga não relevante (score: X/10): [reason] — encerrando.`
              - E encerra.
           4. `adaptResume(job, analysis)`
-          5. `composeEmail(job, analysis)`
+          5. (opcional) `composeEmail(job, analysis)` — atualmente comentado no código principal
      2. **Modo busca em lote no LinkedIn**
         - Comando:
           ```bash
@@ -151,6 +151,7 @@ Arquivo `.env` (baseado em `.env.example`):
 
 ```bash
 OPENAI_API_KEY=coloque_sua_chave_aqui
+DEFAULT_SEARCH_LIMIT=20
 ```
 
 ### Scripts principais
@@ -185,7 +186,7 @@ Isso irá:
 - Scrapar a vaga do LinkedIn.
 - Analisar compatibilidade currículo x vaga.
 - Gerar um currículo adaptado para ATS em `data/outputs/...-resume.md`.
-- Gerar um email de candidatura em `data/outputs/...-email.txt`.
+- (Opcional, se reabilitar no código) gerar um email de candidatura em `data/outputs/...-email.txt`.
 
 #### 4.2. Busca automática de vagas + processamento em lote
 
@@ -199,8 +200,9 @@ Isso irá:
 - Extrair os links das vagas, normalizar para o formato `https://www.linkedin.com/jobs/view/<JOB_ID>` e **eliminar duplicados**.
 - Armazenar cada URL em `data/jobs.db` (SQLite) para não reprocessar a mesma vaga em execuções futuras.
 - Para cada vaga nova:
-  - Rodar scraping, análise de compatibilidade, adaptação de currículo e geração de email.
-  - Salvar currículo e email em `data/outputs/`.
+  - Rodar scraping, análise de compatibilidade e adaptação de currículo.
+  - (Opcional, se reabilitar no código) gerar email de candidatura.
+  - Salvar currículo (e, opcionalmente, o email) em `data/outputs/`.
 
 ---
 

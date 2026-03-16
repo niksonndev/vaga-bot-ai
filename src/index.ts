@@ -3,8 +3,9 @@ import 'dotenv/config';
 import { scrapeJob } from './scraper';
 import { analyzeJob } from './analyzer';
 import { adaptResume } from './adapter';
-import { composeEmail } from './composer';
-import { searchJobs } from './search';
+// composeEmail é opcional; atualmente não é usado no fluxo principal
+// import { composeEmail } from './composer';
+import { searchJobs, SEARCH_KEYWORDS } from './search';
 import { saveJobUrl, saveJobDetails } from './storage';
 
 const requiredEnvVars = ['OPENAI_API_KEY'] as const;
@@ -15,72 +16,10 @@ for (const key of requiredEnvVars) {
   }
 }
 
-async function main() {
-  const [mode, ...rest] = process.argv.slice(2);
+type SearchKeywordKey = keyof typeof SEARCH_KEYWORDS;
 
-  if (!mode) {
-    console.error('Uso: npm run dev -- "<URL_DA_VAGA>"');
-    console.error('   ou: npm run dev -- search [LIMITE_OPCIONAL] "<TERMO_DE_BUSCA>"');
-    process.exit(1);
-  }
-
-  // Modo antigo: processar uma única URL de vaga
-  if (!['search', 'busca'].includes(mode)) {
-    const jobUrl = mode;
-
-    console.log('🔍 Buscando vaga única...');
-    const job = await scrapeJob(jobUrl);
-
-    console.log('📊 Analisando compatibilidade...');
-    const analysis = await analyzeJob(job);
-
-    if (!analysis.relevant) {
-      console.log(`⚠️  Vaga não relevante (score: ${analysis.score}/10): ${analysis.reason} — encerrando.`);
-      return;
-    }
-
-    // persiste detalhes da vaga/análise no SQLite
-    saveJobUrl(job.url);
-    saveJobDetails(job.url, job, analysis);
-
-    console.log('✍️  Adaptando currículo...');
-    await adaptResume(job, analysis);
-
-    console.log('📧 Gerando email...');
-    await composeEmail(job, analysis);
-
-    console.log('✅ Concluído! Arquivos gerados em data/outputs/');
-    console.log('Resumo:', {
-      job: {
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        url: job.url,
-      },
-      analysis,
-    });
-    return;
-  }
-
-  // Novo modo: busca + processamento em lote
-  let limit: number | undefined;
-  let queryParts = rest;
-
-  if (rest.length > 0) {
-    const maybeLimit = Number(rest[0]);
-    if (!Number.isNaN(maybeLimit) && Number.isFinite(maybeLimit) && maybeLimit > 0) {
-      limit = Math.floor(maybeLimit);
-      queryParts = rest.slice(1);
-    }
-  }
-
-  const query = queryParts.join(' ').trim();
-  if (!query) {
-    console.error(
-      'Erro: informe o termo de busca. Ex: npm run dev -- search \"desenvolvedor backend node\" ou npm run dev -- search 10 \"desenvolvedor backend node\"',
-    );
-    process.exit(1);
-  }
+async function processSearchQuery(rawQuery: string, limit?: number) {
+  const query = rawQuery.trim();
 
   console.log(`🔎 Buscando vagas para: "${query}"...`);
   const allUrls = await searchJobs(query);
@@ -118,9 +57,10 @@ async function main() {
 
       console.log('✍️  Adaptando currículo...');
       await adaptResume(job, analysis);
-
-      console.log('📧 Gerando email...');
-      await composeEmail(job, analysis);
+      // Opcional: se quiser gerar email de candidatura automaticamente,
+      // reabilite a chamada abaixo e o import de composeEmail no topo.
+      // console.log('📧 Gerando email...');
+      // await composeEmail(job, analysis);
 
       console.log('✅ Vaga processada com sucesso!', {
         title: job.title,
@@ -136,6 +76,92 @@ async function main() {
       }
     }
   }
+}
+
+async function main() {
+  const [mode, ...rest] = process.argv.slice(2);
+
+  if (!mode) {
+    console.log('Nenhum argumento informado. Rodando buscas padrão em lote (SEARCH_KEYWORDS).');
+
+    const defaultLimitEnv = process.env.DEFAULT_SEARCH_LIMIT;
+    const defaultLimit =
+      defaultLimitEnv && !Number.isNaN(Number(defaultLimitEnv)) && Number(defaultLimitEnv) > 0
+        ? Math.floor(Number(defaultLimitEnv))
+        : undefined;
+
+    const keys = Object.keys(SEARCH_KEYWORDS) as SearchKeywordKey[];
+    for (const key of keys) {
+      const label = SEARCH_KEYWORDS[key];
+      console.log('\n==================================================');
+      console.log(`▶ Executando busca padrão: ${key} → "${label}"`);
+      await processSearchQuery(key, defaultLimit);
+    }
+
+    console.log('\n✅ Execução das buscas padrão concluída.');
+    return;
+  }
+
+  // Modo antigo: processar uma única URL de vaga
+  if (!['search', 'busca'].includes(mode)) {
+    const jobUrl = mode;
+
+    console.log('🔍 Buscando vaga única...');
+    const job = await scrapeJob(jobUrl);
+
+    console.log('📊 Analisando compatibilidade...');
+    const analysis = await analyzeJob(job);
+
+    if (!analysis.relevant) {
+      console.log(`⚠️  Vaga não relevante (score: ${analysis.score}/10): ${analysis.reason} — encerrando.`);
+      return;
+    }
+
+    // persiste detalhes da vaga/análise no SQLite
+    saveJobUrl(job.url);
+    saveJobDetails(job.url, job, analysis);
+
+    console.log('✍️  Adaptando currículo...');
+    await adaptResume(job, analysis);
+    // Opcional: se quiser gerar email de candidatura automaticamente,
+    // reabilite a chamada abaixo e o import de composeEmail no topo.
+    // console.log('📧 Gerando email...');
+    // await composeEmail(job, analysis);
+
+    console.log('✅ Concluído! Arquivos gerados em data/outputs/');
+    console.log('Resumo:', {
+      job: {
+        title: job.title,
+        company: job.company,
+        location: job.location,
+        url: job.url,
+      },
+      analysis,
+    });
+    return;
+  }
+
+  // Novo modo: busca + processamento em lote (manual)
+  let limit: number | undefined;
+  let queryParts = rest;
+
+  if (rest.length > 0) {
+    const maybeLimit = Number(rest[0]);
+    if (!Number.isNaN(maybeLimit) && Number.isFinite(maybeLimit) && maybeLimit > 0) {
+      limit = Math.floor(maybeLimit);
+      queryParts = rest.slice(1);
+    }
+  }
+
+  const query = queryParts.join(' ').trim();
+  if (!query) {
+    console.error(
+      'Erro: informe o termo de busca. Ex: npm run dev -- search \"desenvolvedor backend node\" ou npm run dev -- search 10 \"desenvolvedor backend node\"',
+    );
+    process.exit(1);
+  }
+
+  await processSearchQuery(query, limit);
 }
 
 main().catch((err) => {
