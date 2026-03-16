@@ -5,7 +5,7 @@ import { analyzeJob } from './analyzer';
 import { adaptResume } from './adapter';
 import { composeEmail } from './composer';
 
-const requiredEnvVars = ['ANTHROPIC_API_KEY'] as const;
+const requiredEnvVars = ['OPENAI_API_KEY'] as const;
 
 for (const key of requiredEnvVars) {
   if (!process.env[key]) {

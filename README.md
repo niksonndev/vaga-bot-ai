@@ -1,4 +1,4 @@
-# vaga-bot-ai (Job Agent 24x7)
+# VagaBot Ai
 
 Agente de IA em Node + TypeScript para buscar vagas na internet, analisar relevância em relação ao seu currículo, adaptar o currículo com palavras‑chave otimizadas para sistemas ATS e gerar um e-mail pronto para envio — tudo de forma automatizada e contínua.
 
