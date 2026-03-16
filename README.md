@@ -1,104 +1,139 @@
-# VagaBot Ai
+## VagaBot AI
 
-Agente de IA em Node + TypeScript para buscar vagas na internet, analisar relevância em relação ao seu currículo, adaptar o currículo com palavras‑chave otimizadas para sistemas ATS e gerar um e-mail pronto para envio — tudo de forma automatizada e contínua.
+Agente de IA em Node + TypeScript que lê uma vaga do LinkedIn, analisa compatibilidade com o seu currículo, reescreve o currículo otimizado para ATS e gera um email de candidatura pronto para enviar.
 
-## Ideia geral
+### Ideia geral
 
 Como desenvolvedor, a proposta é ter um **agent de emprego 24x7** que:
 
-- **Busca vagas** em diferentes fontes online.
+- **Lê uma vaga específica** (URL do LinkedIn).
 - **Lê e entende** a descrição da vaga.
-- **Compara** a vaga com o seu currículo base.
-- **Adapta o currículo** inserindo e priorizando palavras‑chave relevantes para sistemas de triagem automática (ATS).
-- **Gera um e-mail** de candidatura personalizado.
-- (Futuro) **Envia o e-mail** automaticamente para o contato da vaga.
+- **Compara** a vaga com o seu currículo base (`data/nikson-curriculo-pt.md`).
+- **Adapta o currículo** inserindo e priorizando palavras‑chave relevantes para sistemas ATS.
+- **Gera um e-mail** de candidatura com tom de dev sênior confiante.
 
-Tudo isso rodando de forma recorrente (por exemplo, via cron job, scheduler ou worker), para que você tenha um fluxo constante de candidaturas personalizadas.
+Hoje o fluxo é executado on‑demand via CLI; no futuro pode rodar em loop/scheduler.
 
-## Stack técnica
+### Stack técnica
 
 - **Runtime**: Node.js + TypeScript
 - **Execução TS**: `ts-node`
-- **IA**: `@anthropic-ai/sdk`
-- **Automação de browser / scraping avançado**: `playwright`
+- **IA**: SDK oficial da OpenAI (`openai`)
+- **Automação de browser / scraping**: `playwright` (LinkedIn job page)
 - **Configuração de ambiente**: `dotenv`
 
-## Estrutura de pastas
+### Estrutura de pastas
 
 ```text
-job-agent/
+vaga-bot-ai/
 ├── src/
-│   ├── scraper.ts        # busca a vaga e extrai dados
-│   ├── analyzer.ts       # filtra relevância
-│   ├── adapter.ts        # adapta o currículo
-│   ├── composer.ts       # gera o email
-│   └── index.ts          # orquestra tudo
+│   ├── scraper.ts   # busca a vaga (LinkedIn) e extrai JobData
+│   ├── analyzer.ts  # analisa compatibilidade currículo x vaga (JSON, score, keywords)
+│   ├── adapter.ts   # reescreve currículo otimizado para ATS e salva .md
+│   ├── composer.ts  # gera email de candidatura e salva .txt
+│   └── index.ts     # CLI que orquestra tudo
 ├── data/
-│   ├── resume.md         # seu currículo base aqui
-│   └── outputs/          # arquivos gerados ficam aqui
+│   ├── nikson-curriculo-pt.md   # currículo base (PT)
+│   ├── nikson-curriculum-en.md  # currículo base (EN) – opcional
+│   └── outputs/                 # arquivos gerados (currículos e emails)
 ├── .env                  # variáveis de ambiente (não versionado)
 ├── .env.example          # exemplo de config de ambiente
 ├── package.json
 └── tsconfig.json
 ```
 
-## Fluxo do agente
+### Fluxo do agente
 
 1. **Scraper (`scraper.ts`)**
-   - Recebe uma URL de vaga ou uma fonte de pesquisa.
-   - Usa HTTP ou Playwright para carregar a página.
-   - Extrai título, descrição, empresa, localização, requisitos, etc.
+   - Recebe **apenas** a URL de uma vaga do LinkedIn.
+   - Usa Playwright (com `headless: false` e user‑agent customizado).
+   - Aguarda seletores críticos (título, empresa, localização, descrição).
+   - Limpa texto (remove “Show more/less”, normaliza quebras de linha).
+   - Retorna um `JobData` tipado:
+     - `title`, `company`, `location`, `description`, `url`.
 
 2. **Analyzer (`analyzer.ts`)**
-   - Carrega seu currículo base de `data/resume.md`.
-   - Compara o texto da vaga com seu perfil, experiência e skills.
-   - Calcula um **score de relevância** e uma lista de **razões** (por que é relevante / não é).
-   - Pode descartar vagas com score abaixo de um threshold.
+   - Lê `data/nikson-curriculo-pt.md`.
+   - Monta um prompt com:
+     - Currículo base.
+     - Título, empresa e descrição da vaga.
+   - Usa OpenAI (`gpt-4.1-mini` / similar) com um **prompt de sistema rígido** para responder somente JSON.
+   - Faz `JSON.parse` com `try/catch`, logando a resposta raw se der erro.
+   - Valida campos obrigatórios e retorna um `AnalysisResult`:
+
+```3:11:C:\Users\nikso\dev\vaga-bot-ai\src\analyzer.ts
+export interface AnalysisResult {
+  score: number;       // 0 a 10
+  relevant: boolean;   // true se score >= 7
+  reason: string;      // 1-2 frases
+  keywords: string[];  // exatamente 10 keywords ATS da vaga
+}
+```
+
+   - Também expõe um mini‑CLI:
+     - `npx ts-node -r dotenv/config src/analyzer.ts "<URL_DA_VAGA>"`  
+       (faz scrape + análise e imprime o JSON).
 
 3. **Adapter (`adapter.ts`)**
-   - Usa o SDK da Anthropic para:
-     - Gerar uma versão adaptada do currículo focada na vaga.
-     - Inserir e reorganizar **palavras‑chave** importantes para o ATS (skills, tecnologias, senioridade, etc.).
-   - Mantém o estilo e a veracidade do seu currículo, apenas enfatizando melhor o que a vaga pede.
+   - Entrada: `adaptResume(job: JobData, analysis: AnalysisResult): Promise<string>`.
+   - Lê o currículo base `data/nikson-curriculo-pt.md`.
+   - Usa um modelo mais forte (`gpt-4.1` / gpt‑4o equivalente) com um prompt de sistema focado em:
+     - Manter 100% das informações verdadeiras.
+     - Incorporar naturalmente as `keywords` da análise onde fizer sentido.
+     - Reordenar/priorizar seções de skills para refletir os requisitos da vaga.
+     - Manter **formato markdown** e retornar só o currículo reescrito.
+   - Salva o currículo adaptado em:
+     - `data/outputs/{company-slug}-{YYYY-MM-DD}-resume.md`
+   - Retorna o currículo reescrito como `string`.
 
 4. **Composer (`composer.ts`)**
-   - Gera um **email de candidatura**:
-     - Assunto personalizado (vaga, empresa, posição).
-     - Corpo do email com introdução, resumo do fit, e call‑to‑action.
-   - Pode incluir trechos do currículo adaptado ou anexos (em fase futura).
+   - Entrada: `composeEmail(job: JobData, analysis: AnalysisResult): Promise<string>`.
+   - Usa um modelo mais barato (`gpt-4.1-mini` / gpt‑4o‑mini equivalente).
+   - Prompt do sistema orientado a:
+     - Email de candidatura direto, confiante, não genérico.
+     - Sem clichês (“venho por meio deste”, etc.).
+     - Retornar apenas o corpo do email (sem assunto/saudação).
+   - Prompt do usuário inclui:
+     - Título da vaga, empresa, keywords e score de compatibilidade + motivo.
+   - Gera um email com no máximo 4 parágrafos, terminando com call to action clara.
+   - Salva em:
+     - `data/outputs/{company-slug}-{YYYY-MM-DD}-email.txt`
+   - Retorna o corpo do email como `string`.
 
 5. **Orquestração (`index.ts`)**
-   - Valida variáveis de ambiente.
-   - Define a fonte/URL das vagas ou um loop de processamento.
-   - Chama `scraper` → `analyzer` → `adapter` → `composer`.
-   - Salva saídas em `data/outputs/` (ex: `curriculo-<id-vaga>.md`, `email-<id-vaga>.md`).
+   - Carrega `.env` (`dotenv/config`) e valida `OPENAI_API_KEY`.
+   - Lê a URL da vaga de `process.argv[2]`.
+   - Fluxo:
+     1. `scrapeJob(url)`
+     2. `analyzeJob(job)`
+     3. Se `analysis.relevant === false`, loga:
+        - `⚠️  Vaga não relevante (score: X/10): [reason] — encerrando.`
+        - E encerra.
+     4. `adaptResume(job, analysis)`
+     5. `composeEmail(job, analysis)`
+   - Loga o progresso:
+     - `🔍 Buscando vaga...`
+     - `📊 Analisando compatibilidade...`
+     - `✍️  Adaptando currículo...`
+     - `📧 Gerando email...`
+     - `✅ Concluído! Arquivos gerados em data/outputs/`
 
-## Variáveis de ambiente
+### Variáveis de ambiente
 
 Arquivo `.env` (baseado em `.env.example`):
 
 ```bash
-ANTHROPIC_API_KEY=coloque_sua_chave_aqui
+OPENAI_API_KEY=coloque_sua_chave_aqui
 ```
 
-## Scripts principais
+### Scripts principais
 
 No `package.json`:
 
 - **`npm run dev`** – roda o `src/index.ts` com `ts-node` (modo desenvolvimento).
 - **`npm run build`** – compila TypeScript para `dist/` usando `tsc`.
 
-## Roadmap de features
-
-- [ ] Implementar scraping real de vagas (ex: LinkedIn, Indeed, Gupy, Greenhouse, etc., respeitando ToS).
-- [ ] Implementar análise de relevância usando IA (Anthropic) + heurísticas.
-- [ ] Implementar adaptação de currículo com foco em ATS (palavras‑chave, formatação, hard/soft skills).
-- [ ] Implementar geração de e-mail de candidatura multilíngue (PT/EN).
-- [ ] Persistir histórico de vagas processadas (para evitar duplicidade).
-- [ ] Automatizar o envio de e-mails (ex: SMTP, Gmail API, etc.).
-- [ ] Adicionar scheduler para rodar 24x7 (cron, worker, Docker, etc.).
-
-## Como começar
+### Como rodar o agente ponta a ponta
 
 1. Instale as dependências:
 
@@ -106,18 +141,23 @@ No `package.json`:
 npm install
 ```
 
-2. Copie `.env.example` para `.env` e coloque sua `ANTHROPIC_API_KEY`.
+2. Copie `.env.example` para `.env` e coloque sua `OPENAI_API_KEY`.
 
-3. Coloque seu currículo base em `data/resume.md` (Markdown).
+3. Coloque seu currículo base em `data/nikson-curriculo-pt.md` (Markdown).
 
-4. Rode em modo desenvolvimento:
+4. Rode o pipeline completo passando a URL da vaga:
 
 ```bash
-npm run dev
+npm run dev -- "https://www.linkedin.com/jobs/view/4371177488"
 ```
 
-5. Ajuste as funções em `scraper.ts`, `analyzer.ts`, `adapter.ts` e `composer.ts` para a lógica real desejada.
+Isso irá:
+
+- Scrapar a vaga do LinkedIn.
+- Analisar compatibilidade currículo x vaga.
+- Gerar um currículo adaptado para ATS em `data/outputs/...-resume.md`.
+- Gerar um email de candidatura em `data/outputs/...-email.txt`.
 
 ---
 
-Este projeto existe para ser o seu **agente pessoal de vagas**, rodando continuamente e otimizando suas candidaturas para maximizar a chance de passar pelos filtros automáticos e chegar de fato nas mãos de recrutadores.
+Este projeto existe para ser o seu **agente pessoal de vagas**, otimizando currículo e comunicação para maximizar a chance de passar pelos filtros automáticos (ATS) e chegar de fato nas mãos de recrutadores.
