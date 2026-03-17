@@ -39,4 +39,5 @@ The update script handles this automatically. If Chromium fails to launch at run
 
 - The app validates `OPENAI_API_KEY` at startup. If the `.env` value is the placeholder from `.env.example`, the app will start but OpenAI calls will return 401 errors. The scraper/search modules still function independently.
 - Playwright launches headless Chromium. No display server (X11/Wayland) is needed.
+- LinkedIn scraping (`scraper.ts`) uses `waitUntil: 'networkidle'` which can timeout (~30s) on some job URLs due to LinkedIn's anti-bot measures. The search module (`search.ts`) uses `waitUntil: 'domcontentloaded'` and is more reliable. Intermittent scraper timeouts are expected and handled gracefully in the batch pipeline.
 - There is no ESLint or Prettier config. `tsc` (via `npm run build`) is the only static analysis tool.
