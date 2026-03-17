@@ -359,34 +359,39 @@ const JOB_LIST_CONTAINER_SELECTORS = [
   '.jobs-search__results-list',
 ];
 
-const JOB_CARD_SELECTORS = [
-  '.jobs-search-results__list-item',
-  '.job-card-container',
-  '.job-card-list__entity-lockup',
-  'li[data-occludable-job-id]',
-];
-
-async function scrollJobListContainer(page: Page): Promise<void> {
-  await page.evaluate((containerSels) => {
-    for (const sel of containerSels) {
-      const el = document.querySelector(sel);
-      if (el) {
-        el.scrollTop = el.scrollHeight;
-        return;
-      }
+async function countJobLinks(page: Page): Promise<number> {
+  return page.$$eval('a[href*="/jobs/view/"]', (links) => {
+    const seen = new Set<string>();
+    for (const link of links) {
+      if (!(link instanceof HTMLAnchorElement)) continue;
+      const m = link.href.match(/\/jobs\/view\/(\d+)/);
+      if (m) seen.add(m[1]);
     }
-    window.scrollTo(0, document.body.scrollHeight);
-  }, JOB_LIST_CONTAINER_SELECTORS);
+    return seen.size;
+  });
 }
 
-async function waitForJobCards(page: Page): Promise<void> {
-  const combinedSelector = JOB_CARD_SELECTORS.concat([
-    'a[href*="/jobs/view/"]',
-  ]).join(', ');
-  try {
-    await page.waitForSelector(combinedSelector, { timeout: 8000 });
-  } catch {
-    // nenhum card encontrado — página pode estar vazia
+async function scrollAndLoadAllCards(page: Page): Promise<void> {
+  const MAX_SCROLL_ATTEMPTS = 15;
+  let prevCount = await countJobLinks(page);
+
+  for (let i = 0; i < MAX_SCROLL_ATTEMPTS; i++) {
+    await page.evaluate((containerSels) => {
+      for (const sel of containerSels) {
+        const el = document.querySelector(sel);
+        if (el) {
+          el.scrollBy(0, 600);
+          return;
+        }
+      }
+      window.scrollBy(0, 600);
+    }, JOB_LIST_CONTAINER_SELECTORS);
+
+    await page.waitForTimeout(randomDelay(700));
+
+    const currentCount = await countJobLinks(page);
+    if (currentCount === prevCount && i >= 3) break;
+    prevCount = currentCount;
   }
 }
 
@@ -405,7 +410,9 @@ async function searchJobsAuthenticated(
 
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await waitForJobCards(page);
+        try {
+          await page.waitForSelector('a[href*="/jobs/view/"]', { timeout: 10000 });
+        } catch { /* página pode estar vazia */ }
         await page.waitForTimeout(randomDelay(1500));
       } catch {
         consecutiveEmpty++;
@@ -414,11 +421,7 @@ async function searchJobsAuthenticated(
         continue;
       }
 
-      // Múltiplos scrolls no container de jobs (não no window)
-      for (let pass = 0; pass < 3; pass++) {
-        await scrollJobListContainer(page);
-        await page.waitForTimeout(randomDelay(800));
-      }
+      await scrollAndLoadAllCards(page);
 
       const pageIds = await extractAuthJobIds(page);
       const sizeBefore = allIds.size;
