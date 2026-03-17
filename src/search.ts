@@ -352,6 +352,44 @@ async function extractAuthJobIds(page: Page): Promise<string[]> {
 // Authenticated search (com login)
 // ---------------------------------------------------------------------------
 
+const JOB_LIST_CONTAINER_SELECTORS = [
+  '.jobs-search-results-list',
+  '.scaffold-layout__list-container',
+  '.scaffold-layout__list',
+  '.jobs-search__results-list',
+];
+
+const JOB_CARD_SELECTORS = [
+  '.jobs-search-results__list-item',
+  '.job-card-container',
+  '.job-card-list__entity-lockup',
+  'li[data-occludable-job-id]',
+];
+
+async function scrollJobListContainer(page: Page): Promise<void> {
+  await page.evaluate((containerSels) => {
+    for (const sel of containerSels) {
+      const el = document.querySelector(sel);
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+    }
+    window.scrollTo(0, document.body.scrollHeight);
+  }, JOB_LIST_CONTAINER_SELECTORS);
+}
+
+async function waitForJobCards(page: Page): Promise<void> {
+  const combinedSelector = JOB_CARD_SELECTORS.concat([
+    'a[href*="/jobs/view/"]',
+  ]).join(', ');
+  try {
+    await page.waitForSelector(combinedSelector, { timeout: 8000 });
+  } catch {
+    // nenhum card encontrado — página pode estar vazia
+  }
+}
+
 async function searchJobsAuthenticated(
   query: string,
   context: BrowserContext,
@@ -367,7 +405,8 @@ async function searchJobsAuthenticated(
 
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(3000);
+        await waitForJobCards(page);
+        await page.waitForTimeout(randomDelay(1500));
       } catch {
         consecutiveEmpty++;
         if (consecutiveEmpty >= 3) break;
@@ -375,24 +414,24 @@ async function searchJobsAuthenticated(
         continue;
       }
 
-      // Scroll para carregar cards lazy-loaded
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(randomDelay(1500));
+      // Múltiplos scrolls no container de jobs (não no window)
+      for (let pass = 0; pass < 3; pass++) {
+        await scrollJobListContainer(page);
+        await page.waitForTimeout(randomDelay(800));
+      }
 
       const pageIds = await extractAuthJobIds(page);
       const sizeBefore = allIds.size;
       for (const id of pageIds) allIds.add(id);
       const newCount = allIds.size - sizeBefore;
 
+      console.log(`  📄 Página start=${start}: ${pageIds.length} cards, ${newCount} novos (total: ${allIds.size})`);
+
       if (pageIds.length === 0 || newCount === 0) {
         consecutiveEmpty++;
-        if (consecutiveEmpty >= 2) break;
+        if (consecutiveEmpty >= 3) break;
       } else {
         consecutiveEmpty = 0;
-      }
-
-      if (start > 0 && start % 100 === 0) {
-        console.log(`  📄 ... ${allIds.size} vagas coletadas (start=${start})`);
       }
 
       await page.waitForTimeout(randomDelay(AUTH_REQUEST_DELAY_MS));
@@ -458,7 +497,7 @@ async function searchJobsGuest(
 // ---------------------------------------------------------------------------
 
 /**
- * Busca vagas no LinkedIn.
+ * Busca vagas no LinkedIn usando estratégia dual (autenticada + guest).
  *
  * Com credenciais (LINKEDIN_EMAIL/LINKEDIN_PASSWORD):
  *   1. Restaura sessão via cookies ou faz login com stealth (headless)
@@ -466,7 +505,8 @@ async function searchJobsGuest(
  *      a. Tenta bypass via CapSolver (se CAPSOLVER_API_KEY estiver configurada)
  *      b. Se CapSolver falhar ou não estiver configurada, abre navegador visível
  *         para o usuário resolver o CAPTCHA manualmente (timeout: 5 min)
- *   3. Após autenticação, busca continua em modo headless (25 vagas/página)
+ *   3. Executa busca autenticada (25 vagas/página) + busca guest (10 vagas/página)
+ *   4. Combina resultados de ambas as buscas (union de IDs únicos)
  *
  * Sem credenciais ou se login falhar:
  *   API guest com paginação (10 vagas/página, ~200 vagas max)
@@ -505,16 +545,26 @@ export async function searchJobs(query: string): Promise<string[]> {
       }
     }
 
-    let jobIds: string[];
+    const mergedIds = new Set<string>();
 
     if (authenticated) {
-      console.log('  🔍 Usando busca autenticada...');
-      jobIds = await searchJobsAuthenticated(query, context, maxResults);
+      console.log('  🔍 Busca autenticada...');
+      const authIds = await searchJobsAuthenticated(query, context, maxResults);
+      for (const id of authIds) mergedIds.add(id);
+      console.log(`  📊 Autenticada: ${authIds.length} vagas`);
+
+      console.log('  🔍 Complementando com busca guest (API pública)...');
+      const guestIds = await searchJobsGuest(query, context, maxResults);
+      const guestNew = guestIds.filter((id) => !mergedIds.has(id));
+      for (const id of guestIds) mergedIds.add(id);
+      console.log(`  📊 Guest: ${guestIds.length} vagas (+${guestNew.length} novas)`);
     } else {
       if (useAuth) console.log('  ⚠️  Login falhou, usando busca guest...');
-      jobIds = await searchJobsGuest(query, context, maxResults);
+      const guestIds = await searchJobsGuest(query, context, maxResults);
+      for (const id of guestIds) mergedIds.add(id);
     }
 
+    const jobIds = Array.from(mergedIds);
     console.log(`  📄 Total: ${jobIds.length} vagas únicas encontradas.`);
     return jobIds.map((id) => `https://www.linkedin.com/jobs/view/${id}`);
   } finally {
