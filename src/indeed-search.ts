@@ -1,9 +1,11 @@
 import { chromium as stealthChromium } from 'playwright-extra';
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { execSync, spawn, ChildProcess } from 'child_process';
+import { execSync, spawn } from 'child_process';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import Database from 'better-sqlite3';
 import { resolveQuery } from './search';
 
 try { stealthChromium.use(StealthPlugin()); } catch { /* already registered */ }
@@ -137,19 +139,16 @@ async function isCloudflareBlocked(page: Page): Promise<boolean> {
 const CHROME_PROFILE_PATH = path.join(__dirname, '..', 'data', 'indeed-chrome-profile');
 
 // ---------------------------------------------------------------------------
-// Chrome standalone (sem Playwright controlando)
+// Chrome standalone (sem Playwright, sem CDP, sem automação)
 // ---------------------------------------------------------------------------
 
 function findChromePath(): string | null {
-  const isMac = process.platform === 'darwin';
-  const isWin = process.platform === 'win32';
-
-  if (isMac) {
+  if (process.platform === 'darwin') {
     const p = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
     if (fs.existsSync(p)) return p;
   }
 
-  if (isWin) {
+  if (process.platform === 'win32') {
     const dirs = [
       process.env['PROGRAMFILES'] || '',
       process.env['PROGRAMFILES(X86)'] || '',
@@ -161,10 +160,10 @@ function findChromePath(): string | null {
     }
   }
 
-  const names = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'];
-  for (const name of names) {
+  for (const name of ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium']) {
     try {
-      const p = execSync(`which ${name} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+      const cmd = process.platform === 'win32' ? `where ${name}` : `which ${name}`;
+      const p = execSync(`${cmd} 2>/dev/null`, { encoding: 'utf-8' }).trim();
       if (p) return p;
     } catch { continue; }
   }
@@ -172,63 +171,117 @@ function findChromePath(): string | null {
   return null;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// ---------------------------------------------------------------------------
+// Cookie extraction from Chrome's SQLite database
+// ---------------------------------------------------------------------------
+
+function findCookieDbPath(): string | null {
+  const candidates = [
+    path.join(CHROME_PROFILE_PATH, 'Default', 'Network', 'Cookies'),
+    path.join(CHROME_PROFILE_PATH, 'Default', 'Cookies'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
-function isIndeedLoggedInUrl(href: string): boolean {
-  return href.includes('indeed.com') &&
-         !href.includes('/auth') &&
-         !href.includes('login') &&
-         !href.includes('challenge') &&
-         !href.includes('verify') &&
-         !href.includes('secure.indeed');
+function getChromeDecryptionKey(): Buffer {
+  if (process.platform === 'darwin') {
+    const password = execSync(
+      'security find-generic-password -s "Chrome Safe Storage" -w',
+      { encoding: 'utf-8' },
+    ).trim();
+    return crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+  }
+  // Linux e outros: chave fixa derivada de "peanuts"
+  return crypto.pbkdf2Sync('peanuts', 'saltysalt', 1, 16, 'sha1');
 }
 
-/**
- * Detecta port de debugging via stdout/stderr do Chrome.
- * Chrome imprime: "DevTools listening on ws://127.0.0.1:<port>/..."
- */
-function waitForDebugPort(chromeProcess: ChildProcess, timeoutMs = 15000): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Chrome startup timeout')), timeoutMs);
+function decryptChromeValue(encryptedValue: Buffer): string {
+  if (!encryptedValue || encryptedValue.length === 0) return '';
 
-    const handler = (data: Buffer) => {
-      const match = data.toString().match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//);
-      if (match) {
-        clearTimeout(timeout);
-        resolve(parseInt(match[1], 10));
+  const prefix = encryptedValue.subarray(0, 3).toString('utf-8');
+  if (prefix !== 'v10' && prefix !== 'v11') {
+    return encryptedValue.toString('utf-8');
+  }
+
+  const encrypted = encryptedValue.subarray(3);
+  const key = getChromeDecryptionKey();
+  const iv = Buffer.alloc(16, ' ');
+  const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+  decipher.setAutoPadding(true);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf-8');
+}
+
+const SAMESITE_MAP: Record<number, 'Strict' | 'Lax' | 'None'> = {
+  0: 'None',
+  1: 'Lax',
+  2: 'Strict',
+};
+
+const CHROME_EPOCH_OFFSET = 11644473600n;
+
+function extractCookiesFromChromeProfile(): any[] | null {
+  const dbPath = findCookieDbPath();
+  if (!dbPath) return null;
+
+  try {
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const rows = db.prepare(
+      `SELECT host_key, name, value, encrypted_value, path, expires_utc,
+              is_secure, is_httponly, samesite
+       FROM cookies WHERE host_key LIKE '%indeed.com%'`,
+    ).all() as any[];
+    db.close();
+
+    return rows.map((row) => {
+      let cookieValue = row.value;
+      if (!cookieValue && row.encrypted_value) {
+        try {
+          cookieValue = decryptChromeValue(row.encrypted_value);
+        } catch { cookieValue = ''; }
       }
-    };
 
-    chromeProcess.stderr?.on('data', handler);
-    chromeProcess.stdout?.on('data', handler);
-    chromeProcess.on('exit', () => {
-      clearTimeout(timeout);
-      reject(new Error('Chrome fechou antes de disponibilizar porta de debug'));
-    });
-  });
+      const expiresUtc = BigInt(row.expires_utc || 0);
+      const expires = expiresUtc > 0n
+        ? Number(expiresUtc / 1000000n - CHROME_EPOCH_OFFSET)
+        : -1;
+
+      return {
+        name: row.name,
+        value: cookieValue,
+        domain: row.host_key,
+        path: row.path,
+        expires,
+        secure: !!row.is_secure,
+        httpOnly: !!row.is_httponly,
+        sameSite: SAMESITE_MAP[row.samesite] || 'None',
+      };
+    }).filter((c: any) => c.value);
+  } catch (err) {
+    console.log(`  ⚠️  Erro ao ler cookies do Chrome: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 /**
- * Abre Chrome como processo independente (sem Playwright controlando).
+ * Abre Chrome como processo totalmente independente para login manual.
  *
- * Playwright injecta CDP session que o Cloudflare Turnstile detecta,
- * causando loop infinito no "Confirme que é humano" (erro 600010).
+ * O Cloudflare Turnstile 2026 detecta qualquer presença de CDP:
+ * - Playwright (mesmo com Chrome real) → erro 600010
+ * - --remote-debugging-port ativo → erro 600010
+ * - DevTools aberto → erro 600010
  *
- * Aqui o Chrome roda 100% limpo, sem nenhuma automação:
- * 1. Spawna Chrome como child_process com --remote-debugging-port
- * 2. Chrome abre limpo — Cloudflare não detecta automação
- * 3. Usuário faz login manualmente (Google, Apple, código por email)
- * 4. Monitora /json/list via HTTP REST (não cria CDP session)
- * 5. Quando login detectado, conecta CDP só para extrair cookies
- * 6. Salva cookies e fecha Chrome
+ * Solução: Chrome roda sem NENHUMA flag de automação/debug.
+ * Após o usuário fazer login e fechar o Chrome, extraímos cookies
+ * direto do banco SQLite do perfil do Chrome.
  */
 async function loginIndeedManual(): Promise<boolean> {
   console.log('');
   console.log('  🖥️  Abrindo Chrome para login manual no Indeed...');
   console.log('  ℹ️  Faça login na janela que será aberta (Google, Apple ou código por email).');
-  console.log(`  ⏳ Timeout: ${MANUAL_LOGIN_TIMEOUT_MS / 60000} min`);
+  console.log('  ℹ️  Após fazer login, FECHE O CHROME para continuar.');
 
   const chromePath = findChromePath();
   if (!chromePath) {
@@ -238,61 +291,35 @@ async function loginIndeedManual(): Promise<boolean> {
 
   fs.mkdirSync(CHROME_PROFILE_PATH, { recursive: true });
 
-  let chromeProcess: ChildProcess | undefined;
-
   try {
-    chromeProcess = spawn(chromePath, [
+    const chromeProcess = spawn(chromePath, [
       `--user-data-dir=${CHROME_PROFILE_PATH}`,
-      '--remote-debugging-port=0',
       '--no-first-run',
       '--no-default-browser-check',
       INDEED_LOGIN_URL,
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { stdio: 'ignore', detached: false });
 
-    const port = await waitForDebugPort(chromeProcess);
-    console.log(`  🔌 Chrome aberto (debug port: ${port}). Aguardando login...`);
+    console.log('  ⏳ Aguardando você fazer login e fechar o Chrome...');
 
-    const startTime = Date.now();
-    while (Date.now() - startTime < MANUAL_LOGIN_TIMEOUT_MS) {
-      if (chromeProcess.exitCode !== null) {
-        console.log('  ❌ Chrome foi fechado antes do login.');
-        return false;
-      }
+    await new Promise<void>((resolve) => {
+      chromeProcess.on('exit', () => resolve());
+    });
 
-      try {
-        const resp = await fetch(`http://127.0.0.1:${port}/json/list`);
-        const pages: any[] = await resp.json();
-        const loggedIn = pages.some((p) => isIndeedLoggedInUrl(p.url || ''));
+    console.log('  🔍 Chrome fechado. Extraindo cookies do perfil...');
 
-        if (loggedIn) {
-          console.log('  ✅ Login no Indeed detectado! Extraindo cookies...');
-
-          const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-          const contexts = browser.contexts();
-          if (contexts.length > 0) {
-            saveCookies(await contexts[0].cookies());
-            console.log('  🍪 Cookies salvos em data/indeed-cookies.json');
-          }
-          await browser.close().catch(() => undefined);
-          return true;
-        }
-      } catch {
-        // Chrome pode ter fechado ou porta não respondeu ainda
-      }
-
-      await sleep(2000);
+    const cookies = extractCookiesFromChromeProfile();
+    if (cookies && cookies.length > 0) {
+      saveCookies(cookies);
+      console.log(`  🍪 ${cookies.length} cookies do Indeed extraídos e salvos.`);
+      return true;
     }
 
-    console.log('  ❌ Timeout aguardando login manual no Indeed.');
+    console.log('  ⚠️  Nenhum cookie do Indeed encontrado no perfil.');
+    console.log('  ℹ️  Certifique-se de ter feito login no Indeed antes de fechar o Chrome.');
     return false;
   } catch (err: any) {
-    const msg = err?.message ?? String(err);
-    console.log(`  ❌ Erro no login manual: ${msg}`);
+    console.log(`  ❌ Erro no login manual: ${err?.message ?? String(err)}`);
     return false;
-  } finally {
-    if (chromeProcess && chromeProcess.exitCode === null) {
-      chromeProcess.kill();
-    }
   }
 }
 
