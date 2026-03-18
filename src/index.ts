@@ -8,7 +8,7 @@ import { analyzeJob } from './analyzer';
 // import { composeEmail } from './composer';
 import { filterJob } from './filter';
 import { searchJobs, SEARCH_KEYWORDS, SearchCategory } from './search';
-import { saveJobUrl, saveJobDetails } from './storage';
+import { hasJobUrl, saveJobUrl, saveJobDetails } from './storage';
 
 const requiredEnvVars = ['OPENAI_API_KEY'] as const;
 
@@ -33,9 +33,8 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
 
   for (const url of urls) {
     try {
-      const inserted = saveJobUrl(url);
-      if (!inserted) {
-        console.log(`⏭️  Vaga já processada, pulando: ${url}`);
+      if (hasJobUrl(url)) {
+        console.log(`⏭️  Vaga já processada (URL existente), pulando: ${url}`);
         continue;
       }
 
@@ -54,6 +53,13 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
 
       if (!analysis.relevant) {
         console.log(`⚠️  Vaga não relevante (score: ${analysis.score}/10): ${analysis.reason} — pulando.`);
+        continue;
+      }
+
+      const inserted = saveJobUrl(job.url);
+      if (!inserted) {
+        // Em caso de corrida, não atualizamos detalhes: regra "não reprocessar se URL existe".
+        console.log(`⏭️  Vaga já inserida durante a análise, pulando: ${url}`);
         continue;
       }
 

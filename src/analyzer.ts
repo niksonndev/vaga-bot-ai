@@ -8,12 +8,13 @@ export interface AnalysisResult {
   relevant: boolean;
   reason: string;
   keywords: string[];
+  category: 'frontend' | 'analytics' | 'fullstack' | 'backend';
 }
 
 const RESUME_PATH =
   process.env.RESUME_PATH || path.join(process.cwd(), 'data', 'nikson-curriculo-generic.md');
 
-const MAX_DESCRIPTION_CHARS = 6000;
+const MAX_DESCRIPTION_CHARS = 3000;
 const MAX_RETRIES = 2;
 const MIN_KEYWORDS = 5;
 const MAX_KEYWORDS = 15;
@@ -40,6 +41,7 @@ const SYSTEM_PROMPT = [
   '  - score (number 0-10)',
   '  - reason (string curta, 1-2 frases)',
   `  - keywords (array de ${MIN_KEYWORDS} a ${MAX_KEYWORDS} strings — as keywords ATS mais relevantes da vaga)`,
+  '  - category (string: "frontend" | "analytics" | "fullstack" | "backend")',
 ].join('\n');
 
 function truncateDescription(description: string): string {
@@ -119,7 +121,7 @@ export async function analyzeJob(job: JobData): Promise<AnalysisResult> {
         throw new Error('Resposta do modelo não é JSON válido.');
       }
 
-      const { score, reason, keywords } = parsed ?? {};
+      const { score, reason, keywords, category } = parsed ?? {};
 
       if (typeof score !== 'number' || score < 0 || score > 10) {
         throw new Error(`Campo "score" ausente ou inválido (esperado: 0-10, recebido: ${score}).`);
@@ -140,11 +142,17 @@ export async function analyzeJob(job: JobData): Promise<AnalysisResult> {
         );
       }
 
+      const validCategories = ['frontend', 'analytics', 'fullstack', 'backend'];
+      if (!validCategories.includes(category)) {
+        throw new Error(`Campo "category" inválido ou ausente (recebido: ${category}).`);
+      }
+
       return {
         score,
         relevant: score >= RELEVANCE_THRESHOLD,
         reason,
         keywords,
+        category,
       };
     } catch (err: any) {
       lastError = err;

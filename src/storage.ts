@@ -15,6 +15,7 @@ export interface StoredJob {
   score: number | null;
   relevant: boolean | null;
   keywords: string[] | null;
+  category: string | null;
 }
 
 let db: Database.Database | null = null;
@@ -35,11 +36,21 @@ function getDb(): Database.Database {
           score INTEGER,
           relevant INTEGER,
           keywords TEXT,
+          category TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `,
       )
       .run();
+
+    // Migração simples para adição de coluna em jobs.db legado.
+    const columns = db
+      .prepare('PRAGMA table_info(jobs)')
+      .all() as Array<{ name: string }>;
+    const hasCategory = columns.some((c) => c.name === 'category');
+    if (!hasCategory) {
+      db.prepare('ALTER TABLE jobs ADD COLUMN category TEXT').run();
+    }
   }
   return db;
 }
@@ -75,6 +86,7 @@ export function saveJobDetails(url: string, job: JobData, analysis: AnalysisResu
              score = ?,
              relevant = ?,
              keywords = ?
+             category = ?
        WHERE url = ?
     `,
   );
@@ -86,6 +98,7 @@ export function saveJobDetails(url: string, job: JobData, analysis: AnalysisResu
     analysis.score,
     analysis.relevant ? 1 : 0,
     JSON.stringify(analysis.keywords),
+    analysis.category,
     url,
   );
 }
