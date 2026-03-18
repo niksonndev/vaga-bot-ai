@@ -2,13 +2,13 @@
 
 Este projeto implementa um **agente de vagas** em Node.js + TypeScript que:
 
-- Faz scraping de vagas do **LinkedIn** e do **Indeed**, gerando um objeto `JobData`.
+- Faz scraping de vagas do **LinkedIn**, gerando um objeto `JobData`.
 - Analisa a compatibilidade entre vaga e currículo base, produzindo um `AnalysisResult`.
 - Adapta o currículo em Markdown com foco em ATS.
 - (Opcionalmente) gera um email de candidatura personalizado.
 - Orquestra tudo através de uma CLI única (`src/index.ts`) que pode operar em **modo URL única**, **modo busca manual** ou **modo busca em lote (batch)**.
 
-A arquitetura é composta por módulos coesos em `src/` responsáveis por scraping, busca (LinkedIn + Indeed), análise, adaptação de currículo, composição de email e storage local em SQLite.
+A arquitetura é composta por módulos coesos em `src/` responsáveis por scraping, busca, análise, adaptação de currículo, composição de email e storage local em SQLite.
 
 ## Comandos da CLI
 
@@ -18,14 +18,11 @@ Ponto de entrada: `src/index.ts` executado via `npm run dev`.
 
 | Modo | Comando | Descrição |
 |------|---------|-----------|
-| **Batch padrão** | `npm run dev` | Itera pelas 4 categorias de keywords (frontend, backend, fullstack, webAnalytics), 5 keywords cada = 20 buscas. Busca no LinkedIn + Indeed para cada keyword. |
-| **URL única** | `npm run dev -- "<URL>"` | Processa uma vaga específica (LinkedIn ou Indeed): scrape → análise → adaptação de currículo. |
-| **Busca (ambos)** | `npm run dev -- search "<query>"` | Busca no LinkedIn + Indeed pelo termo livre informado. |
-| **Apenas LinkedIn** | `npm run dev -- linkedin "<query>"` | Busca **apenas no LinkedIn** pelo termo livre. |
-| **Apenas Indeed** | `npm run dev -- indeed "<query>"` | Busca **apenas no Indeed** pelo termo livre. |
-| **Login Indeed** | `npm run dev -- indeed-login` | Abre Chrome para login manual no Indeed. Salva cookies para buscas futuras. |
-| **Busca com limite** | `npm run dev -- search 10 "<query>"` | Busca pelo termo livre, processando no máximo N vagas. Funciona também com `linkedin` e `indeed`. |
-| **Busca (alias PT)** | `npm run dev -- busca "<query>"` | Alias em português para `search` (LinkedIn + Indeed). |
+| **Batch padrão** | `npm run dev` | Itera pelas 4 categorias de keywords (frontend, backend, fullstack, webAnalytics), 5 keywords cada = 20 buscas no LinkedIn. |
+| **URL única** | `npm run dev -- "<URL>"` | Processa uma vaga específica do LinkedIn: scrape → análise → adaptação de currículo. |
+| **Busca manual** | `npm run dev -- search "<query>"` | Busca no LinkedIn pelo termo livre informado. |
+| **Busca com limite** | `npm run dev -- search 10 "<query>"` | Busca pelo termo livre, processando no máximo N vagas. |
+| **Busca (alias PT)** | `npm run dev -- busca "<query>"` | Alias em português para `search`. |
 
 ### Keywords de busca (SEARCH_KEYWORDS)
 
@@ -68,21 +65,10 @@ Arquivo `.env` (baseado em `.env.example`):
 |----------|:-----------:|-----------|
 | `OPENAI_API_KEY` | Sim | Chave de API da OpenAI para análise e adaptação de currículo. |
 | `DEFAULT_SEARCH_LIMIT` | Não | Limite padrão de vagas processadas por busca (override via CLI: `search 10 "query"`). |
-| `MAX_SEARCH_RESULTS` | Não | Máximo de resultados na paginação. LinkedIn: até 1000 (padrão). Indeed: até 200 (cap interno). |
+| `MAX_SEARCH_RESULTS` | Não | Máximo de resultados na paginação do LinkedIn (padrão: 1000). |
 | `LINKEDIN_EMAIL` | Não | Email para login no LinkedIn (mais resultados via busca autenticada). |
 | `LINKEDIN_PASSWORD` | Não | Senha do LinkedIn. |
 | `CAPSOLVER_API_KEY` | Não | API key do CapSolver para bypass automático de CAPTCHA no login do LinkedIn. |
-
-### Indeed: autenticação via headed browser
-
-O Indeed Brasil não usa login com senha. A autenticação é feita manualmente via navegador visível:
-
-1. Na primeira execução (ou quando cookies expirarem), o app abre um **navegador visível** (headed mode).
-2. O usuário faz login manualmente (Google, Apple ou código por email).
-3. Os cookies são salvos em `data/indeed-cookies.json` e reutilizados nas próximas execuções.
-4. Quando os cookies expiram, o navegador é aberto novamente.
-
-Não há variáveis de ambiente para o Indeed.
 
 Qualquer nova variável de ambiente deve ser documentada em `.env.example` e descrita nesta seção.
 
@@ -93,8 +79,7 @@ Diretórios principais:
 - `src/`
   - `index.ts`: ponto de entrada da CLI, orquestra todo o pipeline.
   - `search.ts`: busca de vagas no LinkedIn (autenticada + guest). Define `SEARCH_KEYWORDS` (4 categorias × 5 keywords). Exporta `resolveQuery` e `SearchCategory`.
-  - `indeed-search.ts`: busca de vagas no Indeed Brasil. Autenticação via headed browser com cookies persistidos. Detecção de Cloudflare.
-  - `scraper.ts`: scraping de uma vaga individual (LinkedIn ou Indeed). Detecta a fonte pela URL e usa seletores apropriados.
+  - `scraper.ts`: scraping de uma vaga individual do LinkedIn.
   - `captcha-solver.ts`: integração com CapSolver para bypass automático de CAPTCHA no LinkedIn.
   - `analyzer.ts`: analisa compatibilidade currículo × vaga e retorna `AnalysisResult`.
   - `adapter.ts`: reescreve o currículo em Markdown otimizado para ATS.
@@ -105,7 +90,6 @@ Diretórios principais:
   - `nikson-curriculum-en.md`: currículo base em inglês (opcional).
   - `jobs.db`: banco SQLite com URLs de vagas já processadas.
   - `linkedin-cookies.json`: cookies de sessão do LinkedIn (gerado automaticamente).
-  - `indeed-cookies.json`: cookies de sessão do Indeed (gerado via login manual em headed browser).
   - `outputs/`: destino de currículos adaptados (`*-resume.md`) e emails (`*-email.txt`).
 
 ## Serviços, jobs e models de cada app
@@ -113,11 +97,9 @@ Diretórios principais:
 ### Serviços principais
 
 - `scrapeJob(url: string): Promise<JobData>` em `scraper.ts`
-  - Detecta a fonte pela URL (LinkedIn ou Indeed) e usa seletores apropriados para extrair dados da vaga.
+  - Abre a página da vaga no LinkedIn, aguarda seletores e extrai dados.
 - `searchJobs(query: string): Promise<string[]>` em `search.ts`
   - Busca vagas no LinkedIn (autenticada + guest API). Filtros: Brasil, remoto, pleno+sênior. Usa `resolveQuery` para mapear keys de SEARCH_KEYWORDS para termos de busca.
-- `searchIndeedJobs(query: string): Promise<string[]>` em `indeed-search.ts`
-  - Busca vagas no Indeed Brasil com filtro remoto. Usa cookies persistidos para autenticação. Se cookies expirados, abre headed browser para login manual.
 - `analyzeJob(job: JobData): Promise<AnalysisResult>` em `analyzer.ts`
   - Usa o currículo base + descrição da vaga para gerar score de compatibilidade e keywords ATS.
 - `adaptResume(job: JobData, analysis: AnalysisResult): Promise<string>` em `adapter.ts`
@@ -130,11 +112,11 @@ Diretórios principais:
 ### Jobs / fluxos
 
 - **Job de URL única** (`npm run dev -- "<URL>"`)
-  - Entrada: URL de uma vaga do LinkedIn ou Indeed.
+  - Entrada: URL de uma vaga do LinkedIn.
   - Passos: `scrapeJob` → `analyzeJob` → (se relevante) `adaptResume`.
 - **Job de busca manual** (`npm run dev -- search "<query>"`)
   - Entrada: termo de busca livre (ex.: `"desenvolvedor backend node"`).
-  - Passos: `searchJobs` (LinkedIn) + `searchIndeedJobs` (Indeed) → merge de URLs → para cada URL: `saveJobUrl` → `scrapeJob` → `analyzeJob` → `adaptResume` (se relevante).
+  - Passos: `searchJobs` → para cada URL: `saveJobUrl` → `scrapeJob` → `analyzeJob` → `adaptResume` (se relevante).
 - **Job de busca batch** (`npm run dev` sem argumentos)
   - Entrada: todas as 20 keywords de `SEARCH_KEYWORDS` (4 categorias × 5 keywords).
   - Passos: para cada categoria → para cada keyword → mesmo fluxo de busca manual acima.

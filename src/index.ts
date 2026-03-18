@@ -6,7 +6,6 @@ import { adaptResume } from './adapter';
 // composeEmail é opcional; atualmente não é usado no fluxo principal
 // import { composeEmail } from './composer';
 import { searchJobs, SEARCH_KEYWORDS, SearchCategory } from './search';
-import { searchIndeedJobs, indeedLogin } from './indeed-search';
 import { saveJobUrl, saveJobDetails } from './storage';
 
 const requiredEnvVars = ['OPENAI_API_KEY'] as const;
@@ -17,40 +16,21 @@ for (const key of requiredEnvVars) {
   }
 }
 
-type SearchSource = 'all' | 'linkedin' | 'indeed';
-
-async function processSearchQuery(rawQuery: string, limit?: number, source: SearchSource = 'all') {
+async function processSearchQuery(rawQuery: string, limit?: number) {
   const query = rawQuery.trim();
 
   console.log(`🔎 Buscando vagas para: "${query}"...`);
-
-  let linkedinUrls: string[] = [];
-  let indeedUrls: string[] = [];
-
-  if (source === 'all' || source === 'linkedin') {
-    console.log('  🔍 Buscando no LinkedIn...');
-    linkedinUrls = await searchJobs(query);
-    console.log(`  📊 LinkedIn: ${linkedinUrls.length} vagas encontradas.`);
-  }
-
-  if (source === 'all' || source === 'indeed') {
-    console.log('  🔍 Buscando no Indeed...');
-    indeedUrls = await searchIndeedJobs(query);
-    console.log(`  📊 Indeed: ${indeedUrls.length} vagas encontradas.`);
-  }
-
-  const allUrls = [...linkedinUrls, ...indeedUrls];
+  const allUrls = await searchJobs(query);
   const urls = typeof limit === 'number' ? allUrls.slice(0, limit) : allUrls;
 
   console.log(
-    `🔗 ${allUrls.length} URLs encontradas${source === 'all' ? ` (LinkedIn: ${linkedinUrls.length}, Indeed: ${indeedUrls.length})` : ''}. Serão processadas ${urls.length} vaga(s)${
+    `🔗 ${allUrls.length} URLs encontradas. Serão processadas ${urls.length} vaga(s)${
       limit ? ` (limite configurado: ${limit})` : ''
     }.`,
   );
 
   for (const url of urls) {
     try {
-      // Armazenamento + deduplicação
       const inserted = saveJobUrl(url);
       if (!inserted) {
         console.log(`⏭️  Vaga já processada, pulando: ${url}`);
@@ -69,15 +49,10 @@ async function processSearchQuery(rawQuery: string, limit?: number, source: Sear
         continue;
       }
 
-      // persiste detalhes da vaga/análise no SQLite
       saveJobDetails(job.url, job, analysis);
 
       console.log('✍️  Adaptando currículo...');
       await adaptResume(job, analysis);
-      // Opcional: se quiser gerar email de candidatura automaticamente,
-      // reabilite a chamada abaixo e o import de composeEmail no topo.
-      // console.log('📧 Gerando email...');
-      // await composeEmail(job, analysis);
 
       console.log('✅ Vaga processada com sucesso!', {
         title: job.title,
@@ -122,20 +97,9 @@ async function main() {
     return;
   }
 
-  // Comando indeed-login: abre Chrome para login manual no Indeed
-  if (mode === 'indeed-login') {
-    const success = await indeedLogin();
-    if (success) {
-      console.log('✅ Login no Indeed concluído. Cookies salvos.');
-    } else {
-      console.log('❌ Login no Indeed falhou.');
-    }
-    return;
-  }
+  const SEARCH_MODES = ['search', 'busca'];
 
-  const SEARCH_MODES = ['search', 'busca', 'linkedin', 'indeed'];
-
-  // Modo antigo: processar uma única URL de vaga
+  // Processar uma única URL de vaga
   if (!SEARCH_MODES.includes(mode)) {
     const jobUrl = mode;
 
@@ -150,16 +114,11 @@ async function main() {
       return;
     }
 
-    // persiste detalhes da vaga/análise no SQLite
     saveJobUrl(job.url);
     saveJobDetails(job.url, job, analysis);
 
     console.log('✍️  Adaptando currículo...');
     await adaptResume(job, analysis);
-    // Opcional: se quiser gerar email de candidatura automaticamente,
-    // reabilite a chamada abaixo e o import de composeEmail no topo.
-    // console.log('📧 Gerando email...');
-    // await composeEmail(job, analysis);
 
     console.log('✅ Concluído! Arquivos gerados em data/outputs/');
     console.log('Resumo:', {
@@ -173,12 +132,6 @@ async function main() {
     });
     return;
   }
-
-  // Determina a fonte de busca
-  const source: SearchSource =
-    mode === 'linkedin' ? 'linkedin' :
-    mode === 'indeed' ? 'indeed' :
-    'all';
 
   // Busca + processamento em lote
   let limit: number | undefined;
@@ -204,15 +157,13 @@ async function main() {
     console.error(
       'Erro: informe o termo de busca.\n' +
       'Exemplos:\n' +
-      '  npm run dev -- search "React Developer"        (LinkedIn + Indeed)\n' +
-      '  npm run dev -- linkedin "React Developer"       (apenas LinkedIn)\n' +
-      '  npm run dev -- indeed "React Developer"         (apenas Indeed)\n' +
-      '  npm run dev -- search 10 "React Developer"      (com limite)',
+      '  npm run dev -- search "React Developer"\n' +
+      '  npm run dev -- search 10 "React Developer"   (com limite)',
     );
     process.exit(1);
   }
 
-  await processSearchQuery(query, limit, source);
+  await processSearchQuery(query, limit);
 }
 
 main().catch((err) => {
