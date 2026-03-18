@@ -10,7 +10,8 @@ export interface AnalysisResult {
   keywords: string[];
 }
 
-const RESUME_PATH = process.env.RESUME_PATH || path.join(process.cwd(), 'data', 'nikson-curriculo-pt.md');
+const RESUME_PATH =
+  process.env.RESUME_PATH || path.join(process.cwd(), 'data', 'nikson-curriculo-generic.md');
 
 const MAX_DESCRIPTION_CHARS = 4000;
 const MAX_RETRIES = 2;
@@ -37,7 +38,6 @@ const SYSTEM_PROMPT = [
   'Responda SOMENTE com um objeto JSON válido.',
   'O JSON deve ter exatamente os campos:',
   '  - score (number 0-10)',
-  '  - relevant (boolean)',
   '  - reason (string curta, 1-2 frases)',
   `  - keywords (array de ${MIN_KEYWORDS} a ${MAX_KEYWORDS} strings — as keywords ATS mais relevantes da vaga)`,
 ].join('\n');
