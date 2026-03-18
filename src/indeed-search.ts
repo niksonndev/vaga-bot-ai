@@ -1,5 +1,5 @@
 import { chromium as stealthChromium } from 'playwright-extra';
-import { Browser, BrowserContext, Page } from 'playwright';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -134,23 +134,42 @@ async function isCloudflareBlocked(page: Page): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * Abre navegador visível para o usuário fazer login manualmente no Indeed.
+ * Abre o Chrome real do sistema (não o Chromium do Playwright) para login manual.
+ *
+ * O Cloudflare Turnstile detecta o Chromium do Playwright pela fingerprint TLS
+ * e fica em loop de verificação. O Chrome real tem a fingerprint correta e
+ * passa o Turnstile normalmente.
+ *
  * Indeed Brasil não tem login com senha — usa Google, Apple ou código por email.
  * Após autenticação, salva cookies em data/indeed-cookies.json.
  */
 async function loginIndeedManual(): Promise<boolean> {
   console.log('');
-  console.log('  🖥️  Abrindo navegador para login manual no Indeed...');
+  console.log('  🖥️  Abrindo Chrome para login manual no Indeed...');
   console.log('  ℹ️  Faça login na janela que será aberta (Google, Apple ou código por email).');
   console.log(`  ⏳ Timeout: ${MANUAL_LOGIN_TIMEOUT_MS / 60000} min`);
 
   let browser: Browser | undefined;
 
   try {
-    browser = await launchBrowser(false);
-    const context = await createContext(browser);
-    const page = await context.newPage();
+    browser = await chromium.launch({
+      headless: false,
+      channel: 'chrome',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--window-size=1920,1080',
+      ],
+    });
 
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo',
+    });
+
+    const page = await context.newPage();
     await page.goto(INDEED_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     try {
