@@ -36,7 +36,7 @@ There is no built-in mock mode. If you do not have a valid key:
 
 ```ts
 // Example stub return value for analyzeJob():
-{ score: 8, relevant: true, reason: "Strong match", keywords: ["k1","k2","k3","k4","k5","k6","k7","k8","k9","k10"] }
+{ relevant: true, category: "frontend" }
 ```
 
 ---
@@ -97,7 +97,7 @@ npx ts-node src/scraper.ts "https://www.linkedin.com/jobs/view/4371177488"
 
 ### 3. Job Analyzer (`src/analyzer.ts`)
 
-**What it does:** Sends the base resume (`data/nikson-curriculo-pt.md`) and scraped job data to OpenAI (`gpt-4.1-mini`, temperature 0). Returns `{ score, relevant, reason, keywords }`.
+**What it does:** Sends the base resume (`data/nikson-curriculo-generic.md`) and scraped job data to OpenAI (`gpt-4.1-nano`, temperature 0). Returns `{ relevant, category }`.
 
 **Requires:** Valid `OPENAI_API_KEY`.
 
@@ -109,15 +109,15 @@ npx ts-node -r dotenv/config src/analyzer.ts "https://www.linkedin.com/jobs/view
 
 This internally calls `scrapeJob()` first, then `analyzeJob()`.
 
-**Expected output:** JSON with `score` (0-10), `relevant` (boolean), `reason` (string), `keywords` (array of 10 strings).
+**Expected output:** JSON with `relevant` (boolean) and `category` (`"frontend"` | `"analytics"` | `"fullstack"` | `"backend"`).
 
-**Verify success:** Valid JSON with exactly those four fields, exit code 0.
+**Verify success:** Valid JSON with exactly those two fields, exit code 0.
 
 ---
 
 ### 4. Resume Adapter (`src/adapter.ts`)
 
-**What it does:** Sends the original resume + analysis keywords to OpenAI (`gpt-4.1`, temperature 0.2). Writes an ATS-optimized resume to `data/outputs/{company}-{date}-resume.md`.
+**What it does:** Sends the original resume + analysis category to OpenAI (`gpt-4.1`, temperature 0.2). Writes an ATS-optimized resume to `data/outputs/{company}-{date}-resume.md`.
 
 **Requires:** Valid `OPENAI_API_KEY`. No standalone CLI — tested through the main pipeline.
 
@@ -155,7 +155,7 @@ npx ts-node -e "
 const Database = require('better-sqlite3');
 const db = new Database('data/jobs.db');
 console.log(db.prepare('SELECT COUNT(*) as count FROM jobs').get());
-console.log(db.prepare('SELECT url, title, score, relevant FROM jobs ORDER BY id DESC LIMIT 5').all());
+console.log(db.prepare('SELECT url, title, relevant, category FROM jobs ORDER BY id DESC LIMIT 5').all());
 "
 ```
 
@@ -165,7 +165,7 @@ console.log(db.prepare('SELECT url, title, score, relevant FROM jobs ORDER BY id
 rm data/jobs.db
 ```
 
-**Verify success:** Row count increases after a pipeline run; `title`, `score`, `relevant` columns are populated for processed jobs.
+**Verify success:** Row count increases after a pipeline run; `title`, `relevant`, `category` columns are populated for processed jobs.
 
 ---
 

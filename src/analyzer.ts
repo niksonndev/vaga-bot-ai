@@ -4,10 +4,7 @@ import type { JobData } from './scraper';
 import OpenAI from 'openai';
 
 export interface AnalysisResult {
-  score: number;
   relevant: boolean;
-  reason: string;
-  keywords: string[];
   category: 'frontend' | 'analytics' | 'fullstack' | 'backend';
 }
 
@@ -16,9 +13,6 @@ const RESUME_PATH =
 
 const MAX_DESCRIPTION_CHARS = 3000;
 const MAX_RETRIES = 2;
-const MIN_KEYWORDS = 5;
-const MAX_KEYWORDS = 15;
-const RELEVANCE_THRESHOLD = 7;
 
 let cachedResume: string | null = null;
 
@@ -34,14 +28,11 @@ const openaiClient = new OpenAI({
 });
 
 const SYSTEM_PROMPT = [
-  'Você é um especialista em recrutamento e ATS (Applicant Tracking Systems).',
-  'Analise a compatibilidade entre o currículo e a vaga fornecidos.',
-  'Responda SOMENTE com um objeto JSON válido.',
-  'O JSON deve ter exatamente os campos:',
-  '  - score (number 0-10)',
-  '  - reason (string curta, 1-2 frases)',
-  `  - keywords (array de ${MIN_KEYWORDS} a ${MAX_KEYWORDS} strings — as keywords ATS mais relevantes da vaga)`,
-  '  - category (string: "frontend" | "analytics" | "fullstack" | "backend")',
+  'Você classifica vagas de emprego.',
+  'Dado um currículo e uma vaga, responda SOMENTE com JSON: { "relevant": boolean, "category": string }',
+  'relevant: true se o candidato tem ao menos 60% de match com os requisitos técnicos da vaga.',
+  'category: o perfil principal exigido pela vaga — "frontend", "analytics", "fullstack" ou "backend".',
+  'Sem justificativas, sem keywords, sem análise adicional.',
 ].join('\n');
 
 function truncateDescription(description: string): string {
@@ -98,13 +89,13 @@ export async function analyzeJob(job: JobData): Promise<AnalysisResult> {
 
     try {
       const response = await openaiClient.chat.completions.create({
-        model: 'gpt-4.1-mini',
+        model: 'gpt-4.1-nano',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userPrompt },
         ],
         temperature: 0,
-        max_tokens: 512,
+        max_tokens: 40,
         response_format: { type: 'json_object' },
       });
 
@@ -121,25 +112,10 @@ export async function analyzeJob(job: JobData): Promise<AnalysisResult> {
         throw new Error('Resposta do modelo não é JSON válido.');
       }
 
-      const { score, reason, keywords, category } = parsed ?? {};
+      const { relevant, category } = parsed ?? {};
 
-      if (typeof score !== 'number' || score < 0 || score > 10) {
-        throw new Error(`Campo "score" ausente ou inválido (esperado: 0-10, recebido: ${score}).`);
-      }
-
-      if (typeof reason !== 'string' || reason.length === 0) {
-        throw new Error('Campo "reason" ausente ou inválido na resposta do modelo.');
-      }
-
-      if (
-        !Array.isArray(keywords) ||
-        keywords.length < MIN_KEYWORDS ||
-        keywords.length > MAX_KEYWORDS ||
-        !keywords.every((k: unknown) => typeof k === 'string')
-      ) {
-        throw new Error(
-          `Campo "keywords" deve ser um array de ${MIN_KEYWORDS}-${MAX_KEYWORDS} strings (recebido: ${Array.isArray(keywords) ? keywords.length : typeof keywords}).`,
-        );
+      if (typeof relevant !== 'boolean') {
+        throw new Error(`Campo "relevant" ausente ou inválido (esperado: boolean, recebido: ${typeof relevant}).`);
       }
 
       const validCategories = ['frontend', 'analytics', 'fullstack', 'backend'];
@@ -147,13 +123,7 @@ export async function analyzeJob(job: JobData): Promise<AnalysisResult> {
         throw new Error(`Campo "category" inválido ou ausente (recebido: ${category}).`);
       }
 
-      return {
-        score,
-        relevant: score >= RELEVANCE_THRESHOLD,
-        reason,
-        keywords,
-        category,
-      };
+      return { relevant, category };
     } catch (err: any) {
       lastError = err;
 

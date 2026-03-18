@@ -54,7 +54,7 @@ No modo batch (`npm run dev` sem argumentos), todas as 20 keywords são executad
 - **Linguagem**: TypeScript
 - **Runtime**: Node.js
 - **Execução TS em desenvolvimento**: `ts-node`
-- **IA / LLM**: SDK oficial da OpenAI (`openai`) – modelos `gpt-4.1-mini` (análise) e `gpt-4.1`/equivalente (adaptação de currículo)
+- **IA / LLM**: SDK oficial da OpenAI (`openai`) – modelos `gpt-4.1-nano` (análise/classificação) e `gpt-4.1`/equivalente (adaptação de currículo)
 - **Automação de browser / scraping**: `playwright` + `playwright-extra` + `puppeteer-extra-plugin-stealth`
 - **Banco de dados**: SQLite via `better-sqlite3`
 - **Gerenciamento de dependências / scripts**: `npm`
@@ -103,9 +103,9 @@ Diretórios principais:
 - `searchJobs(query: string): Promise<string[]>` em `search.ts`
   - Busca vagas no LinkedIn (autenticada + guest API). Filtros: Brasil, remoto, pleno+sênior. Usa `resolveQuery` para mapear keys de SEARCH_KEYWORDS para termos de busca.
 - `analyzeJob(job: JobData): Promise<AnalysisResult>` em `analyzer.ts`
-  - Usa o currículo base + descrição da vaga para gerar score de compatibilidade e keywords ATS.
+  - Usa o currículo base + descrição da vaga para classificar relevância e categoria da vaga.
 - `adaptResume(job: JobData, analysis: AnalysisResult): Promise<string>` em `adapter.ts`
-  - Reescreve o currículo em Markdown incorporando as keywords relevantes.
+  - Reescreve o currículo em Markdown otimizado para ATS.
 - `composeEmail(job: JobData, analysis: AnalysisResult): Promise<string>` em `composer.ts`
   - Gera um email de candidatura conciso e direto (opcional, desabilitado).
 - `saveJobUrl(url: string): { inserted: boolean }` em `storage.ts`
@@ -132,10 +132,8 @@ Diretórios principais:
   - `description: string`
   - `url: string`
 - `AnalysisResult`
-  - `score: number` (0 a 10)
-  - `relevant: boolean` (true se `score >= 7`)
-  - `reason: string` (1‑2 frases com o porquê do score)
-  - `keywords: string[]` (exatamente 10 palavras‑chave ATS da vaga)
+  - `relevant: boolean` (true se ≥60% de match técnico)
+  - `category: 'frontend' | 'analytics' | 'fullstack' | 'backend'`
 
 ## 12 "common hurdles" com soluções documentadas
 

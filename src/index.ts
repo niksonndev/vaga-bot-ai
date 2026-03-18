@@ -52,7 +52,7 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
       const analysis = await analyzeJob(job);
 
       if (!analysis.relevant) {
-        console.log(`⚠️  Vaga não relevante (score: ${analysis.score}/10): ${analysis.reason} — pulando.`);
+        console.log(`⚠️  Vaga não relevante (category: ${analysis.category}) — pulando.`);
         continue;
       }
 
@@ -72,7 +72,7 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
       console.log('✅ Vaga processada com sucesso!', {
         title: job.title,
         company: job.company,
-        score: analysis.score,
+        category: analysis.category,
         url: job.url,
       });
     } catch (err: any) {
@@ -152,7 +152,7 @@ async function main() {
     const analysis = await analyzeJob(job);
 
     if (!analysis.relevant) {
-      console.log(`⚠️  Vaga não relevante (score: ${analysis.score}/10): ${analysis.reason} — encerrando.`);
+      console.log(`⚠️  Vaga não relevante (category: ${analysis.category}) — encerrando.`);
       return;
     }
 

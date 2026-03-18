@@ -11,10 +11,7 @@ export interface StoredJob {
   createdAt: string;
   title: string | null;
   company: string | null;
-  reason: string | null;
-  score: number | null;
   relevant: boolean | null;
-  keywords: string[] | null;
   category: string | null;
 }
 
@@ -32,10 +29,7 @@ function getDb(): Database.Database {
           url TEXT NOT NULL UNIQUE,
           title TEXT,
           company TEXT,
-          reason TEXT,
-          score INTEGER,
           relevant INTEGER,
-          keywords TEXT,
           category TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -82,10 +76,7 @@ export function saveJobDetails(url: string, job: JobData, analysis: AnalysisResu
       UPDATE jobs
          SET title = ?,
              company = ?,
-             reason = ?,
-             score = ?,
              relevant = ?,
-             keywords = ?
              category = ?
        WHERE url = ?
     `,
@@ -94,10 +85,7 @@ export function saveJobDetails(url: string, job: JobData, analysis: AnalysisResu
   stmt.run(
     job.title,
     job.company,
-    analysis.reason,
-    analysis.score,
     analysis.relevant ? 1 : 0,
-    JSON.stringify(analysis.keywords),
     analysis.category,
     url,
   );
