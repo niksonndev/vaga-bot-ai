@@ -4,7 +4,6 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveQuery } from './search';
-import { handleCaptchaIfPresent, hasCaptchaSolverKey } from './captcha-solver';
 
 try { stealthChromium.use(StealthPlugin()); } catch { /* already registered */ }
 
@@ -15,7 +14,7 @@ const INDEED_LOGIN_URL = 'https://secure.indeed.com/auth';
 const PAGE_SIZE = 10;
 const REQUEST_DELAY_MS = 1500;
 const MAX_CONSECUTIVE_EMPTY = 3;
-const MANUAL_CAPTCHA_TIMEOUT_MS = 5 * 60 * 1000;
+const MANUAL_LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 const COOKIES_PATH = path.join(__dirname, '..', 'data', 'indeed-cookies.json');
 
@@ -46,8 +45,6 @@ const BROWSER_ARGS = [
   '--start-maximized',
 ];
 
-type AuthResult = 'authenticated' | 'captcha_required' | 'failed';
-
 // ---------------------------------------------------------------------------
 // Cookie persistence
 // ---------------------------------------------------------------------------
@@ -71,10 +68,6 @@ function saveCookies(cookies: any[]): void {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function hasIndeedCredentials(): boolean {
-  return !!(process.env.INDEED_EMAIL && process.env.INDEED_PASSWORD);
-}
 
 function buildIndeedSearchUrl(rawQuery: string, start = 0): string {
   const query = resolveQuery(rawQuery);
@@ -137,117 +130,19 @@ async function isCloudflareBlocked(page: Page): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Indeed login
+// Login manual via headed browser
 // ---------------------------------------------------------------------------
 
-async function loginToIndeed(context: BrowserContext): Promise<AuthResult> {
-  const email = process.env.INDEED_EMAIL!;
-  const password = process.env.INDEED_PASSWORD!;
-  const page = await context.newPage();
-
-  try {
-    console.log('  🔐 Fazendo login no Indeed...');
-    await page.goto(INDEED_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
-
-    if (await isCloudflareBlocked(page)) {
-      console.log('  ⚠️  Cloudflare bloqueou a página de login do Indeed.');
-      return 'captcha_required';
-    }
-
-    // Indeed login: step 1 — email
-    const emailSelector = 'input[type="email"], input[name="__email"], #ifl-InputFormField-3';
-    try {
-      await page.waitForSelector(emailSelector, { timeout: 10000 });
-    } catch {
-      console.log('  ⚠️  Campo de email não encontrado na página de login.');
-      return 'failed';
-    }
-
-    await page.click(emailSelector);
-    await page.keyboard.type(email, { delay: 50 + Math.random() * 80 });
-    await page.waitForTimeout(400 + Math.random() * 300);
-
-    await page.click('button[type="submit"]');
-    console.log('  📧 Email enviado...');
-    await page.waitForTimeout(3000 + Math.random() * 1000);
-
-    // Indeed login: step 2 — password
-    const passwordSelector = 'input[type="password"], input[name="__password"], #ifl-InputFormField-7';
-    try {
-      await page.waitForSelector(passwordSelector, { timeout: 10000 });
-    } catch {
-      // May have gone directly to CAPTCHA or verification
-      if (await isCloudflareBlocked(page)) {
-        return 'captcha_required';
-      }
-      console.log('  ⚠️  Campo de senha não encontrado após envio do email.');
-      return 'failed';
-    }
-
-    await page.click(passwordSelector);
-    await page.keyboard.type(password, { delay: 50 + Math.random() * 80 });
-    await page.waitForTimeout(300 + Math.random() * 400);
-
-    await page.click('button[type="submit"]');
-    console.log('  🔑 Senha enviada...');
-    await page.waitForTimeout(5000);
-
-    const currentUrl = page.url();
-
-    // Check if login succeeded — Indeed redirects to homepage or jobs
-    if (currentUrl.includes('indeed.com') &&
-        !currentUrl.includes('/auth') &&
-        !currentUrl.includes('login') &&
-        !currentUrl.includes('challenge') &&
-        !currentUrl.includes('verify')) {
-      console.log('  ✅ Login no Indeed bem-sucedido!');
-      saveCookies(await context.cookies());
-      return 'authenticated';
-    }
-
-    // Check for CAPTCHA / verification
-    if (currentUrl.includes('challenge') ||
-        currentUrl.includes('verify') ||
-        currentUrl.includes('security')) {
-      console.log('  🛡️  Verificação de segurança detectada no Indeed...');
-
-      if (hasCaptchaSolverKey()) {
-        const solved = await handleCaptchaIfPresent(page);
-        if (solved) {
-          await page.waitForTimeout(3000);
-          const postCaptchaUrl = page.url();
-          if (!postCaptchaUrl.includes('/auth') && !postCaptchaUrl.includes('login')) {
-            console.log('  ✅ Login no Indeed bem-sucedido após bypass do CAPTCHA!');
-            saveCookies(await context.cookies());
-            return 'authenticated';
-          }
-        }
-        console.log('  ⚠️  CapSolver não conseguiu resolver o CAPTCHA do Indeed.');
-      }
-
-      return 'captcha_required';
-    }
-
-    if (await isCloudflareBlocked(page)) {
-      return 'captcha_required';
-    }
-
-    console.log(`  ⚠️  Estado pós-login desconhecido no Indeed: ${currentUrl}`);
-    return 'failed';
-  } finally {
-    await page.close().catch(() => undefined);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Login manual com navegador visível (para CAPTCHA/Cloudflare)
-// ---------------------------------------------------------------------------
-
-async function loginIndeedWithManualCaptcha(): Promise<boolean> {
+/**
+ * Abre navegador visível para o usuário fazer login manualmente no Indeed.
+ * Indeed Brasil não tem login com senha — usa Google, Apple ou código por email.
+ * Após autenticação, salva cookies em data/indeed-cookies.json.
+ */
+async function loginIndeedManual(): Promise<boolean> {
   console.log('');
-  console.log('  🖥️  Abrindo navegador visível para login manual no Indeed...');
-  console.log('  ℹ️  Complete o login e a verificação na janela do navegador.');
+  console.log('  🖥️  Abrindo navegador para login manual no Indeed...');
+  console.log('  ℹ️  Faça login na janela que será aberta (Google, Apple ou código por email).');
+  console.log(`  ⏳ Timeout: ${MANUAL_LOGIN_TIMEOUT_MS / 60000} min`);
 
   let browser: Browser | undefined;
 
@@ -256,38 +151,9 @@ async function loginIndeedWithManualCaptcha(): Promise<boolean> {
     const context = await createContext(browser);
     const page = await context.newPage();
 
-    const email = process.env.INDEED_EMAIL!;
-    const password = process.env.INDEED_PASSWORD!;
-
     await page.goto(INDEED_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
-
-    // Try to fill email if field is available (may be blocked by Cloudflare)
-    const emailSelector = 'input[type="email"], input[name="__email"], #ifl-InputFormField-3';
-    try {
-      await page.waitForSelector(emailSelector, { timeout: 10000 });
-      await page.click(emailSelector);
-      await page.keyboard.type(email, { delay: 50 + Math.random() * 80 });
-      await page.waitForTimeout(400 + Math.random() * 300);
-      await page.click('button[type="submit"]');
-      await page.waitForTimeout(3000);
-
-      const passwordSelector = 'input[type="password"], input[name="__password"], #ifl-InputFormField-7';
-      try {
-        await page.waitForSelector(passwordSelector, { timeout: 10000 });
-        await page.click(passwordSelector);
-        await page.keyboard.type(password, { delay: 50 + Math.random() * 80 });
-        await page.waitForTimeout(300 + Math.random() * 400);
-        await page.click('button[type="submit"]');
-      } catch { /* user will complete manually */ }
-    } catch {
-      console.log('  ℹ️  Página bloqueada. Complete o processo manualmente.');
-    }
-
-    console.log(`  ⏳ Aguardando login manual no Indeed... (timeout: ${MANUAL_CAPTCHA_TIMEOUT_MS / 60000} min)`);
 
     try {
-      // Wait until user lands on an Indeed page (not auth/login)
       await page.waitForURL(
         (url) => {
           const href = url.toString();
@@ -295,9 +161,10 @@ async function loginIndeedWithManualCaptcha(): Promise<boolean> {
                  !href.includes('/auth') &&
                  !href.includes('login') &&
                  !href.includes('challenge') &&
-                 !href.includes('verify');
+                 !href.includes('verify') &&
+                 !href.includes('secure.indeed');
         },
-        { timeout: MANUAL_CAPTCHA_TIMEOUT_MS },
+        { timeout: MANUAL_LOGIN_TIMEOUT_MS },
       );
       console.log('  ✅ Login no Indeed bem-sucedido! Salvando sessão...');
       saveCookies(await context.cookies());
@@ -311,7 +178,7 @@ async function loginIndeedWithManualCaptcha(): Promise<boolean> {
     if (msg.includes('Target closed') || msg.includes('Browser closed')) {
       console.log('  ❌ Navegador foi fechado antes da conclusão do login.');
     } else {
-      console.log(`  ❌ Erro ao abrir navegador para login manual: ${msg}`);
+      console.log(`  ❌ Erro ao abrir navegador para login: ${msg}`);
     }
     return false;
   } finally {
@@ -325,7 +192,12 @@ async function loginIndeedWithManualCaptcha(): Promise<boolean> {
 // Session management
 // ---------------------------------------------------------------------------
 
-async function ensureIndeedAuthenticated(context: BrowserContext): Promise<AuthResult> {
+/**
+ * Tenta restaurar sessão via cookies.
+ * Se os cookies forem válidos, retorna true.
+ * Se expirados ou inexistentes, abre headed browser para login manual.
+ */
+async function ensureIndeedSession(context: BrowserContext): Promise<boolean> {
   const cookies = loadCookies();
   if (cookies) {
     await context.addCookies(cookies);
@@ -337,23 +209,20 @@ async function ensureIndeedAuthenticated(context: BrowserContext): Promise<AuthR
       });
       await page.waitForTimeout(3000);
 
-      if (await isCloudflareBlocked(page)) {
-        console.log('  🍪 Cookies do Indeed expirados (Cloudflare challenge). Tentando login...');
-      } else {
+      if (!(await isCloudflareBlocked(page))) {
         const url = page.url();
         if (url.includes('indeed.com') && !url.includes('/auth') && !url.includes('login')) {
           console.log('  🍪 Sessão do Indeed restaurada via cookies.');
-          return 'authenticated';
+          return true;
         }
-        console.log('  🍪 Cookies do Indeed expirados, tentando login...');
       }
+      console.log('  🍪 Cookies do Indeed expirados ou inválidos.');
     } finally {
       await page.close().catch(() => undefined);
     }
   }
 
-  if (!hasIndeedCredentials()) return 'failed';
-  return loginToIndeed(context);
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,67 +318,46 @@ async function searchIndeedPaginated(
 /**
  * Busca vagas no Indeed Brasil com filtro de trabalho remoto.
  *
- * Com credenciais (INDEED_EMAIL/INDEED_PASSWORD):
- *   1. Restaura sessão via cookies ou faz login com stealth (headless)
- *   2. Se CAPTCHA/Cloudflare aparecer:
- *      a. Tenta bypass via CapSolver (se CAPSOLVER_API_KEY estiver configurada)
- *      b. Se falhar, abre navegador visível para o usuário resolver manualmente
- *   3. Executa busca autenticada com paginação
- *
- * Sem credenciais:
- *   Tenta busca guest (pode ser bloqueada por Cloudflare em IPs de datacenter)
+ * Fluxo:
+ *   1. Tenta restaurar sessão via cookies (data/indeed-cookies.json)
+ *   2. Se cookies válidos → busca diretamente
+ *   3. Se cookies expirados/inexistentes ou Cloudflare bloquear:
+ *      → Abre navegador visível para login manual (Google, Apple, código por email)
+ *      → Salva cookies após login
+ *      → Continua com busca autenticada
  */
 export async function searchIndeedJobs(query: string): Promise<string[]> {
   const maxResults = getMaxIndeedResults();
-  const useAuth = hasIndeedCredentials();
   let browser: Browser | undefined;
 
   try {
     browser = await launchBrowser();
     let context = await createContext(browser);
-    let authenticated = false;
 
-    if (useAuth) {
-      const authResult = await ensureIndeedAuthenticated(context);
+    let sessionValid = await ensureIndeedSession(context);
 
-      if (authResult === 'captcha_required') {
-        await browser.close().catch(() => undefined);
-        browser = undefined;
+    if (!sessionValid) {
+      // Fechar browser headless e abrir headed para login manual
+      await browser.close().catch(() => undefined);
+      browser = undefined;
 
-        const manualSuccess = await loginIndeedWithManualCaptcha();
+      const loginSuccess = await loginIndeedManual();
 
-        browser = await launchBrowser();
-        context = await createContext(browser);
+      browser = await launchBrowser();
+      context = await createContext(browser);
 
-        if (manualSuccess) {
-          const cookies = loadCookies();
-          if (cookies) {
-            await context.addCookies(cookies);
-            authenticated = true;
-          }
+      if (loginSuccess) {
+        const cookies = loadCookies();
+        if (cookies) {
+          await context.addCookies(cookies);
+          sessionValid = true;
         }
-      } else if (authResult === 'authenticated') {
-        authenticated = true;
       }
     }
 
-    if (!authenticated && !useAuth) {
-      // Guest mode: just try searching directly
-      const page = await context.newPage();
-      try {
-        await page.goto(`${INDEED_BASE_URL}/`, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(3000);
-        if (await isCloudflareBlocked(page)) {
-          console.log('  ⚠️  Indeed protegido por Cloudflare. Configure INDEED_EMAIL e INDEED_PASSWORD no .env para autenticação.');
-          return [];
-        }
-      } finally {
-        await page.close().catch(() => undefined);
-      }
-    }
-
-    if (!authenticated && useAuth) {
-      console.log('  ⚠️  Login no Indeed falhou. Tentando busca sem autenticação...');
+    if (!sessionValid) {
+      console.log('  ⚠️  Sem sessão do Indeed. Busca Indeed ignorada nesta execução.');
+      return [];
     }
 
     const jobKeys = await searchIndeedPaginated(query, context, maxResults);
