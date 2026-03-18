@@ -229,17 +229,16 @@ function getWindowsChromeKey(): Buffer {
   const encryptedKey = encryptedKeyFull.subarray(5);
   const encryptedKeyB64Clean = encryptedKey.toString('base64');
 
-  const psScript = `
-    Add-Type -AssemblyName System.Security
-    $encrypted = [Convert]::FromBase64String("${encryptedKeyB64Clean}")
-    $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect(
-      $encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-    )
-    [Convert]::ToBase64String($decrypted)
-  `.trim();
+  const psCommand =
+    `Add-Type -AssemblyName System.Security; ` +
+    `[Convert]::ToBase64String(` +
+    `[System.Security.Cryptography.ProtectedData]::Unprotect(` +
+    `[Convert]::FromBase64String('${encryptedKeyB64Clean}'),` +
+    `$null,` +
+    `[System.Security.Cryptography.DataProtectionScope]::CurrentUser))`;
 
   const result = execSync(
-    `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"').replace(/\n/g, '; ')}"`,
+    `powershell -NoProfile -NonInteractive -Command "${psCommand}"`,
     { encoding: 'utf-8' },
   ).trim();
 
