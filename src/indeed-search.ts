@@ -630,7 +630,7 @@ export async function searchIndeedJobs(query: string): Promise<string[]> {
   let browser: Browser | undefined;
 
   try {
-    browser = await launchBrowser();
+    browser = await launchBrowser(false);
     const context = await createContext(browser);
     await addCookiesSafe(context, cookies);
 
