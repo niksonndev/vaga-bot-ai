@@ -97,6 +97,27 @@ async function main() {
     return;
   }
 
+  // Comando por categoria: frontend, backend, fullstack, webAnalytics
+  const categoryKeys = Object.keys(SEARCH_KEYWORDS) as SearchCategory[];
+  const matchedCategory = categoryKeys.find((c) => c.toLowerCase() === mode.toLowerCase());
+  if (matchedCategory) {
+    const defaultLimitEnv = process.env.DEFAULT_SEARCH_LIMIT;
+    const defaultLimit =
+      defaultLimitEnv && !Number.isNaN(Number(defaultLimitEnv)) && Number(defaultLimitEnv) > 0
+        ? Math.floor(Number(defaultLimitEnv))
+        : undefined;
+
+    console.log(`🏷️  Rodando categoria: ${matchedCategory}`);
+    const keywords = SEARCH_KEYWORDS[matchedCategory];
+    for (const [key, label] of Object.entries(keywords)) {
+      console.log('\n==================================================');
+      console.log(`▶ [${matchedCategory}] ${key} → "${label}"`);
+      await processSearchQuery(key, defaultLimit);
+    }
+    console.log(`\n✅ Categoria ${matchedCategory} concluída.`);
+    return;
+  }
+
   const SEARCH_MODES = ['search', 'busca'];
 
   // Processar uma única URL de vaga

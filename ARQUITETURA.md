@@ -18,7 +18,11 @@ Ponto de entrada: `src/index.ts` executado via `npm run dev`.
 
 | Modo | Comando | Descrição |
 |------|---------|-----------|
-| **Batch padrão** | `npm run dev` | Itera pelas 4 categorias de keywords (frontend, backend, fullstack, webAnalytics), 5 keywords cada = 20 buscas no LinkedIn. |
+| **Batch padrão** | `npm run dev` | Itera pelas 4 categorias (20 keywords) no LinkedIn. |
+| **Categoria** | `npm run dev -- frontend` | Roda apenas as 5 keywords da categoria informada. |
+| | `npm run dev -- backend` | |
+| | `npm run dev -- fullstack` | |
+| | `npm run dev -- webAnalytics` | |
 | **URL única** | `npm run dev -- "<URL>"` | Processa uma vaga específica do LinkedIn: scrape → análise → adaptação de currículo. |
 | **Busca manual** | `npm run dev -- search "<query>"` | Busca no LinkedIn pelo termo livre informado. |
 | **Busca com limite** | `npm run dev -- search 10 "<query>"` | Busca pelo termo livre, processando no máximo N vagas. |
