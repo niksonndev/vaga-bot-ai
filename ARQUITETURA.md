@@ -72,7 +72,6 @@ Arquivo `.env` (baseado em `.env.example`):
 | `MAX_SEARCH_RESULTS` | Não | Máximo de resultados na paginação do LinkedIn (padrão: 1000). |
 | `LINKEDIN_EMAIL` | Não | Email para login no LinkedIn (mais resultados via busca autenticada). |
 | `LINKEDIN_PASSWORD` | Não | Senha do LinkedIn. |
-| `CAPSOLVER_API_KEY` | Não | API key do CapSolver para bypass automático de CAPTCHA no login do LinkedIn. |
 
 Qualquer nova variável de ambiente deve ser documentada em `.env.example` e descrita nesta seção.
 
@@ -84,7 +83,6 @@ Diretórios principais:
   - `index.ts`: ponto de entrada da CLI, orquestra todo o pipeline.
   - `search.ts`: busca de vagas no LinkedIn (autenticada + guest). Define `SEARCH_KEYWORDS` (4 categorias × 5 keywords). Exporta `resolveQuery` e `SearchCategory`.
   - `scraper.ts`: scraping de uma vaga individual do LinkedIn.
-  - `captcha-solver.ts`: integração com CapSolver para bypass automático de CAPTCHA no LinkedIn.
   - `analyzer.ts`: analisa compatibilidade currículo × vaga e retorna `AnalysisResult`.
   - `adapter.ts`: reescreve o currículo em Markdown otimizado para ATS.
   - `composer.ts`: gera email de candidatura (opcional, desabilitado no fluxo principal).

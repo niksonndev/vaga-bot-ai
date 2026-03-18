@@ -3,8 +3,6 @@ import { Browser, BrowserContext } from 'playwright';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as fs from 'fs';
 import * as path from 'path';
-import { handleCaptchaIfPresent, hasCaptchaSolverKey } from './captcha-solver';
-
 stealthChromium.use(StealthPlugin());
 
 export interface SessionCookie {
@@ -186,17 +184,7 @@ async function loginToLinkedIn(context: BrowserContext): Promise<AuthResult> {
     }
 
     if (currentUrl.includes('checkpoint') || currentUrl.includes('challenge')) {
-      console.log('  🛡️  Checkpoint de segurança detectado...');
-
-      if (hasCaptchaSolverKey()) {
-        const solved = await handleCaptchaIfPresent(page);
-        if (solved) {
-          console.log('  ✅ Login bem-sucedido após bypass do CAPTCHA!');
-          return 'authenticated';
-        }
-        console.log('  ⚠️  CapSolver não conseguiu resolver o CAPTCHA.');
-      }
-
+      console.log('  🛡️  Checkpoint de segurança detectado, login manual necessário...');
       return 'captcha_required';
     }
 
