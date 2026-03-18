@@ -12,7 +12,7 @@ const RESUME_PATH =
   process.env.RESUME_PATH || path.join(process.cwd(), 'data', 'nikson-curriculo-generic.md');
 
 const MAX_DESCRIPTION_CHARS = 3000;
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 1;
 
 let cachedResume: string | null = null;
 
