@@ -179,10 +179,30 @@ function findCookieDbPath(): string | null {
   const candidates = [
     path.join(CHROME_PROFILE_PATH, 'Default', 'Network', 'Cookies'),
     path.join(CHROME_PROFILE_PATH, 'Default', 'Cookies'),
+    path.join(CHROME_PROFILE_PATH, 'Network', 'Cookies'),
+    path.join(CHROME_PROFILE_PATH, 'Cookies'),
   ];
   for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+    if (fs.existsSync(p)) {
+      console.log(`  📂 Cookie DB encontrado: ${p}`);
+      return p;
+    }
   }
+  console.log(`  ⚠️  Cookie DB não encontrado. Caminhos testados:`);
+  for (const p of candidates) {
+    console.log(`      ${p}`);
+  }
+  // Listar o conteúdo do perfil para debug
+  try {
+    const profileDefault = path.join(CHROME_PROFILE_PATH, 'Default');
+    if (fs.existsSync(profileDefault)) {
+      const entries = fs.readdirSync(profileDefault).slice(0, 20);
+      console.log(`  📂 Conteúdo de Default/: ${entries.join(', ')}`);
+    } else {
+      const entries = fs.readdirSync(CHROME_PROFILE_PATH).slice(0, 20);
+      console.log(`  📂 Conteúdo do perfil: ${entries.join(', ')}`);
+    }
+  } catch { /* ignore */ }
   return null;
 }
 
@@ -227,28 +247,68 @@ function extractCookiesFromChromeProfile(): any[] | null {
   if (!dbPath) return null;
 
   try {
-    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    // Copiar DB para evitar problemas de lock/WAL
+    const tmpDb = dbPath + '.tmp';
+    fs.copyFileSync(dbPath, tmpDb);
+    // Copiar WAL e SHM se existirem
+    if (fs.existsSync(dbPath + '-wal')) fs.copyFileSync(dbPath + '-wal', tmpDb + '-wal');
+    if (fs.existsSync(dbPath + '-shm')) fs.copyFileSync(dbPath + '-shm', tmpDb + '-shm');
+
+    const db = new Database(tmpDb, { readonly: true });
+
+    // Debug: ver total de cookies e hosts disponíveis
+    const totalCount = (db.prepare('SELECT COUNT(*) as c FROM cookies').get() as any)?.c || 0;
+    console.log(`  📊 Total de cookies no DB: ${totalCount}`);
+
+    if (totalCount > 0) {
+      const hosts = db.prepare(
+        `SELECT DISTINCT host_key FROM cookies ORDER BY host_key`,
+      ).all() as any[];
+      const indeedHosts = hosts.filter((h: any) => h.host_key.includes('indeed'));
+      console.log(`  📊 Hosts indeed encontrados: ${indeedHosts.length > 0 ? indeedHosts.map((h: any) => h.host_key).join(', ') : 'NENHUM'}`);
+
+      if (indeedHosts.length === 0) {
+        const sampleHosts = hosts.slice(0, 10).map((h: any) => h.host_key);
+        console.log(`  📊 Amostra de hosts: ${sampleHosts.join(', ')}`);
+      }
+    }
+
     const rows = db.prepare(
       `SELECT host_key, name, value, encrypted_value, path, expires_utc,
               is_secure, is_httponly, samesite
-       FROM cookies WHERE host_key LIKE '%indeed.com%'`,
+       FROM cookies WHERE host_key LIKE '%indeed%'`,
     ).all() as any[];
     db.close();
 
-    return rows.map((row) => {
+    // Limpeza dos arquivos temporários
+    try { fs.unlinkSync(tmpDb); } catch { /* ignore */ }
+    try { fs.unlinkSync(tmpDb + '-wal'); } catch { /* ignore */ }
+    try { fs.unlinkSync(tmpDb + '-shm'); } catch { /* ignore */ }
+
+    console.log(`  📊 Cookies do Indeed no DB: ${rows.length}`);
+
+    if (rows.length === 0) return null;
+
+    const cookies: any[] = [];
+    for (const row of rows) {
       let cookieValue = row.value;
       if (!cookieValue && row.encrypted_value) {
         try {
           cookieValue = decryptChromeValue(row.encrypted_value);
-        } catch { cookieValue = ''; }
+        } catch (err) {
+          console.log(`  ⚠️  Falha ao descriptografar cookie ${row.name}: ${(err as Error).message}`);
+          cookieValue = '';
+        }
       }
+
+      if (!cookieValue) continue;
 
       const expiresUtc = BigInt(row.expires_utc || 0);
       const expires = expiresUtc > 0n
         ? Number(expiresUtc / 1000000n - CHROME_EPOCH_OFFSET)
         : -1;
 
-      return {
+      cookies.push({
         name: row.name,
         value: cookieValue,
         domain: row.host_key,
@@ -257,8 +317,10 @@ function extractCookiesFromChromeProfile(): any[] | null {
         secure: !!row.is_secure,
         httpOnly: !!row.is_httponly,
         sameSite: SAMESITE_MAP[row.samesite] || 'None',
-      };
-    }).filter((c: any) => c.value);
+      });
+    }
+
+    return cookies;
   } catch (err) {
     console.log(`  ⚠️  Erro ao ler cookies do Chrome: ${(err as Error).message}`);
     return null;
