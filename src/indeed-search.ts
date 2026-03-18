@@ -133,12 +133,19 @@ async function isCloudflareBlocked(page: Page): Promise<boolean> {
 // Login manual via headed browser
 // ---------------------------------------------------------------------------
 
+const CHROME_PROFILE_PATH = path.join(__dirname, '..', 'data', 'indeed-chrome-profile');
+
 /**
- * Abre o Chrome real do sistema (não o Chromium do Playwright) para login manual.
+ * Abre o Chrome real com perfil persistente para login manual no Indeed.
  *
- * O Cloudflare Turnstile detecta o Chromium do Playwright pela fingerprint TLS
- * e fica em loop de verificação. O Chrome real tem a fingerprint correta e
- * passa o Turnstile normalmente.
+ * Usa launchPersistentContext com channel:'chrome' para:
+ * - Lançar o Chrome real do sistema (fingerprint TLS correta)
+ * - Usar um perfil persistente (parece um browser real de usuário)
+ * - Não injetar user-agent/viewport artificiais (menos detecção)
+ * - --disable-blink-features=AutomationControlled remove flag de automação
+ *
+ * Isso contorna o Cloudflare Turnstile que detecta Playwright pelo CDP,
+ * navigator.webdriver e fingerprint do Chromium empacotado.
  *
  * Indeed Brasil não tem login com senha — usa Google, Apple ou código por email.
  * Após autenticação, salva cookies em data/indeed-cookies.json.
@@ -149,27 +156,27 @@ async function loginIndeedManual(): Promise<boolean> {
   console.log('  ℹ️  Faça login na janela que será aberta (Google, Apple ou código por email).');
   console.log(`  ⏳ Timeout: ${MANUAL_LOGIN_TIMEOUT_MS / 60000} min`);
 
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
 
   try {
-    browser = await chromium.launch({
+    fs.mkdirSync(CHROME_PROFILE_PATH, { recursive: true });
+
+    context = await chromium.launchPersistentContext(CHROME_PROFILE_PATH, {
       headless: false,
       channel: 'chrome',
       args: [
+        '--disable-blink-features=AutomationControlled',
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--window-size=1920,1080',
       ],
-    });
-
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 900 },
+      viewport: null,
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
+      ignoreDefaultArgs: ['--enable-automation'],
     });
 
-    const page = await context.newPage();
+    const page = context.pages()[0] || await context.newPage();
     await page.goto(INDEED_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     try {
@@ -201,8 +208,8 @@ async function loginIndeedManual(): Promise<boolean> {
     }
     return false;
   } finally {
-    if (browser) {
-      await browser.close().catch(() => undefined);
+    if (context) {
+      await context.close().catch(() => undefined);
     }
   }
 }
