@@ -2,9 +2,11 @@ import 'dotenv/config';
 
 import { scrapeJob } from './scraper';
 import { analyzeJob } from './analyzer';
-import { adaptResume } from './adapter';
+// adaptResume desabilitado temporariamente para reduzir custos com OpenAI
+// import { adaptResume } from './adapter';
 // composeEmail é opcional; atualmente não é usado no fluxo principal
 // import { composeEmail } from './composer';
+import { filterJob } from './filter';
 import { searchJobs, SEARCH_KEYWORDS, SearchCategory } from './search';
 import { saveJobUrl, saveJobDetails } from './storage';
 
@@ -41,6 +43,12 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
 
       const job = await scrapeJob(url);
 
+      const filter = filterJob(job);
+      if (!filter.passed) {
+        console.log(`🚫 Filtrada: ${filter.reason} — pulando.`);
+        continue;
+      }
+
       console.log('📊 Analisando compatibilidade...');
       const analysis = await analyzeJob(job);
 
@@ -51,8 +59,9 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
 
       saveJobDetails(job.url, job, analysis);
 
-      console.log('✍️  Adaptando currículo...');
-      await adaptResume(job, analysis);
+      // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
+      // console.log('✍️  Adaptando currículo...');
+      // await adaptResume(job, analysis);
 
       console.log('✅ Vaga processada com sucesso!', {
         title: job.title,
@@ -127,6 +136,12 @@ async function main() {
     console.log('🔍 Buscando vaga única...');
     const job = await scrapeJob(jobUrl);
 
+    const filter = filterJob(job);
+    if (!filter.passed) {
+      console.log(`🚫 Filtrada: ${filter.reason} — encerrando.`);
+      return;
+    }
+
     console.log('📊 Analisando compatibilidade...');
     const analysis = await analyzeJob(job);
 
@@ -138,10 +153,11 @@ async function main() {
     saveJobUrl(job.url);
     saveJobDetails(job.url, job, analysis);
 
-    console.log('✍️  Adaptando currículo...');
-    await adaptResume(job, analysis);
+    // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
+    // console.log('✍️  Adaptando currículo...');
+    // await adaptResume(job, analysis);
 
-    console.log('✅ Concluído! Arquivos gerados em data/outputs/');
+    console.log('✅ Concluído!');
     console.log('Resumo:', {
       job: {
         title: job.title,
