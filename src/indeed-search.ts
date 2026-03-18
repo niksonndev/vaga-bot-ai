@@ -68,6 +68,36 @@ function saveCookies(cookies: any[]): void {
   fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2));
 }
 
+async function addCookiesSafe(context: BrowserContext, cookies: any[]): Promise<number> {
+  let added = 0;
+  for (const cookie of cookies) {
+    if (!cookie.name || !cookie.value || !cookie.domain) continue;
+    const clean: Record<string, any> = {
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path || '/',
+      secure: !!cookie.secure,
+      httpOnly: !!cookie.httpOnly,
+    };
+    if (cookie.sameSite === 'None' && clean.secure) {
+      clean.sameSite = 'None';
+    } else if (cookie.sameSite === 'Strict') {
+      clean.sameSite = 'Strict';
+    } else {
+      clean.sameSite = 'Lax';
+    }
+    if (cookie.expires && cookie.expires > 0) {
+      clean.expires = cookie.expires;
+    }
+    try {
+      await context.addCookies([clean as any]);
+      added++;
+    } catch { /* skip invalid cookie */ }
+  }
+  return added;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -457,7 +487,7 @@ async function loginIndeedManual(): Promise<boolean> {
 async function ensureIndeedSession(context: BrowserContext): Promise<boolean> {
   const cookies = loadCookies();
   if (cookies) {
-    await context.addCookies(cookies);
+    await addCookiesSafe(context, cookies);
     const page = await context.newPage();
     try {
       await page.goto(`${INDEED_BASE_URL}/`, {
@@ -606,7 +636,7 @@ export async function searchIndeedJobs(query: string): Promise<string[]> {
       if (loginSuccess) {
         const cookies = loadCookies();
         if (cookies) {
-          await context.addCookies(cookies);
+          await addCookiesSafe(context, cookies);
           sessionValid = true;
         }
       }
