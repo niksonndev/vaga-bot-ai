@@ -38,9 +38,7 @@ export async function composeEmail(job: JobData, analysis: AnalysisResult): Prom
     '',
     `VAGA: ${job.title}`,
     `EMPRESA: ${job.company}`,
-    `KEYWORDS DA VAGA: ${analysis.keywords.join(', ')}`,
-    `SCORE DE COMPATIBILIDADE: ${analysis.score}/10`,
-    `MOTIVO: ${analysis.reason}`,
+    `CATEGORIA DA VAGA: ${analysis.category}`,
     '',
     'Use o tom de um desenvolvedor sênior confiante, não de alguém implorando por emprego.',
     'O email deve ter no máximo 4 parágrafos.',
@@ -48,7 +46,7 @@ export async function composeEmail(job: JobData, analysis: AnalysisResult): Prom
   ].join('\n');
 
   const response = await openaiClient.chat.completions.create({
-    model: 'gpt-4.1-mini', // equivalente ao gpt-4o-mini
+    model: 'gpt-4.1-nano',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },

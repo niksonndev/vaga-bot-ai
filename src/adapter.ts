@@ -38,14 +38,14 @@ export async function adaptResume(job: JobData, analysis: AnalysisResult): Promi
     'Sua tarefa é reescrever o currículo fornecido para maximizar a compatibilidade com a vaga.',
     'Regras obrigatórias:',
     '- Mantenha 100% das informações verdadeiras — nunca invente experiências ou habilidades',
-    '- Incorpore naturalmente as keywords fornecidas onde forem verdadeiras',
+    '- Incorpore naturalmente os termos técnicos relevantes para a categoria da vaga',
     '- Priorize e reordene as seções de skills para refletir os requisitos da vaga',
     '- Mantenha o formato markdown',
     '- Retorne apenas o currículo reescrito, sem explicações adicionais',
   ].join('\n');
 
   const userPrompt = [
-    `KEYWORDS DA VAGA: ${analysis.keywords.join(', ')}`,
+    `CATEGORIA DA VAGA: ${analysis.category}`,
     `TÍTULO DA VAGA: ${job.title}`,
     `EMPRESA: ${job.company}`,
     '',

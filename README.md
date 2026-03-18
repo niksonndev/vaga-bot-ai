@@ -61,16 +61,14 @@ vaga-bot-ai/
    - Monta um prompt com:
      - Currículo base.
      - Título, empresa e descrição da vaga.
-   - Usa OpenAI (`gpt-4.1-mini` / similar) com um **prompt de sistema rígido** para responder somente JSON.
+   - Usa OpenAI (`gpt-4.1-nano`) com um **prompt de sistema rígido** para responder somente JSON.
    - Faz `JSON.parse` com `try/catch`, logando a resposta raw se der erro.
    - Valida campos obrigatórios e retorna um `AnalysisResult`:
 
-```3:11:C:\Users\nikso\dev\vaga-bot-ai\src\analyzer.ts
+```ts
 export interface AnalysisResult {
-  score: number;       // 0 a 10
-  relevant: boolean;   // true se score >= 7
-  reason: string;      // 1-2 frases
-  keywords: string[];  // exatamente 10 keywords ATS da vaga
+  relevant: boolean;
+  category: 'frontend' | 'analytics' | 'fullstack' | 'backend';
 }
 ```
 
@@ -83,7 +81,7 @@ export interface AnalysisResult {
    - Lê o currículo base `data/nikson-curriculo-pt.md`.
    - Usa um modelo mais forte (`gpt-4.1` / gpt‑4o equivalente) com um prompt de sistema focado em:
      - Manter 100% das informações verdadeiras.
-     - Incorporar naturalmente as `keywords` da análise onde fizer sentido.
+     - Incorporar naturalmente os requisitos da vaga onde fizer sentido.
      - Reordenar/priorizar seções de skills para refletir os requisitos da vaga.
      - Manter **formato markdown** e retornar só o currículo reescrito.
    - Salva o currículo adaptado em:
@@ -92,13 +90,13 @@ export interface AnalysisResult {
 
 4. **Composer (`composer.ts`)** (opcional, atualmente desabilitado no fluxo padrão)
    - Entrada: `composeEmail(job: JobData, analysis: AnalysisResult): Promise<string>`.
-   - Usa um modelo mais barato (`gpt-4.1-mini` / gpt‑4o‑mini equivalente).
+   - Usa um modelo leve (`gpt-4.1-nano`).
    - Prompt do sistema orientado a:
      - Email de candidatura direto, confiante, não genérico.
      - Sem clichês (“venho por meio deste”, etc.).
      - Retornar apenas o corpo do email (sem assunto/saudação).
    - Prompt do usuário inclui:
-     - Título da vaga, empresa, keywords e score de compatibilidade + motivo.
+     - Título da vaga, empresa e categoria da vaga.
    - Gera um email com no máximo 4 parágrafos, terminando com call to action clara.
    - Salva em:
      - `data/outputs/{company-slug}-{YYYY-MM-DD}-email.txt`
@@ -116,7 +114,7 @@ export interface AnalysisResult {
           1. `scrapeJob(url)`
           2. `analyzeJob(job)`
           3. Se `analysis.relevant === false`, loga:
-             - `⚠️  Vaga não relevante (score: X/10): [reason] — encerrando.`
+             - `⚠️  Vaga não relevante (category: X) — encerrando.`
              - E encerra.
           4. `adaptResume(job, analysis)`
           5. (opcional) `composeEmail(job, analysis)` — atualmente comentado no código principal
@@ -143,7 +141,7 @@ export interface AnalysisResult {
              - `📊 Analisando compatibilidade...`
              - `✍️  Adaptando currículo...`
              - `📧 Gerando email...`
-             - `✅ Vaga processada com sucesso! { title, company, score, url }`
+             - `✅ Vaga processada com sucesso! { title, company, category, url }`
 
 ### Variáveis de ambiente
 
