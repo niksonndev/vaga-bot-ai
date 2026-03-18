@@ -5,7 +5,8 @@ import { analyzeJob } from './analyzer';
 import { adaptResume } from './adapter';
 // composeEmail é opcional; atualmente não é usado no fluxo principal
 // import { composeEmail } from './composer';
-import { searchJobs, SEARCH_KEYWORDS } from './search';
+import { searchJobs, SEARCH_KEYWORDS, SearchCategory } from './search';
+import { searchIndeedJobs } from './indeed-search';
 import { saveJobUrl, saveJobDetails } from './storage';
 
 const requiredEnvVars = ['OPENAI_API_KEY'] as const;
@@ -16,17 +17,24 @@ for (const key of requiredEnvVars) {
   }
 }
 
-type SearchKeywordKey = keyof typeof SEARCH_KEYWORDS;
-
 async function processSearchQuery(rawQuery: string, limit?: number) {
   const query = rawQuery.trim();
 
   console.log(`🔎 Buscando vagas para: "${query}"...`);
-  const allUrls = await searchJobs(query);
+
+  console.log('  🔍 Buscando no LinkedIn...');
+  const linkedinUrls = await searchJobs(query);
+  console.log(`  📊 LinkedIn: ${linkedinUrls.length} vagas encontradas.`);
+
+  console.log('  🔍 Buscando no Indeed...');
+  const indeedUrls = await searchIndeedJobs(query);
+  console.log(`  📊 Indeed: ${indeedUrls.length} vagas encontradas.`);
+
+  const allUrls = [...linkedinUrls, ...indeedUrls];
   const urls = typeof limit === 'number' ? allUrls.slice(0, limit) : allUrls;
 
   console.log(
-    `🔗 ${allUrls.length} URLs encontradas. Serão processadas ${urls.length} vaga(s)${
+    `🔗 ${allUrls.length} URLs encontradas (LinkedIn: ${linkedinUrls.length}, Indeed: ${indeedUrls.length}). Serão processadas ${urls.length} vaga(s)${
       limit ? ` (limite configurado: ${limit})` : ''
     }.`,
   );
@@ -90,12 +98,15 @@ async function main() {
         ? Math.floor(Number(defaultLimitEnv))
         : undefined;
 
-    const keys = Object.keys(SEARCH_KEYWORDS) as SearchKeywordKey[];
-    for (const key of keys) {
-      const label = SEARCH_KEYWORDS[key];
-      console.log('\n==================================================');
-      console.log(`▶ Executando busca padrão: ${key} → "${label}"`);
-      await processSearchQuery(key, defaultLimit);
+    const categories = Object.keys(SEARCH_KEYWORDS) as SearchCategory[];
+    for (const category of categories) {
+      console.log(`\n🏷️  Categoria: ${category}`);
+      const keywords = SEARCH_KEYWORDS[category];
+      for (const [key, label] of Object.entries(keywords)) {
+        console.log('\n==================================================');
+        console.log(`▶ [${category}] ${key} → "${label}"`);
+        await processSearchQuery(key, defaultLimit);
+      }
     }
 
     console.log('\n✅ Execução das buscas padrão concluída.');

@@ -1,0 +1,169 @@
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { resolveQuery } from './search';
+
+const INDEED_BASE_URL = 'https://br.indeed.com';
+const INDEED_SEARCH_PATH = '/jobs';
+
+const PAGE_SIZE = 10;
+const REQUEST_DELAY_MS = 1200;
+const MAX_CONSECUTIVE_EMPTY = 3;
+
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+const BROWSER_ARGS = [
+  '--disable-blink-features=AutomationControlled',
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-infobars',
+  '--window-size=1920,1080',
+];
+
+function buildIndeedSearchUrl(rawQuery: string, start = 0): string {
+  const query = resolveQuery(rawQuery);
+  const params = new URLSearchParams({
+    q: query,
+    l: '',
+    remotejob: '032b3046-06a3-4876-8dfd-474eb5e7ed11',
+    start: String(start),
+  });
+  return `${INDEED_BASE_URL}${INDEED_SEARCH_PATH}?${params.toString()}`;
+}
+
+function getMaxIndeedResults(): number {
+  const envVal = process.env.MAX_SEARCH_RESULTS;
+  if (envVal && !Number.isNaN(Number(envVal)) && Number(envVal) > 0) {
+    return Math.min(Math.floor(Number(envVal)), 200);
+  }
+  return 200;
+}
+
+function randomDelay(baseMs: number): number {
+  return baseMs + Math.floor(Math.random() * 600);
+}
+
+async function extractIndeedJobKeys(page: Page): Promise<string[]> {
+  const fromDataJk = await page.$$eval('[data-jk]', (elements) => {
+    const keys: string[] = [];
+    for (const el of elements) {
+      const jk = el.getAttribute('data-jk');
+      if (jk && !keys.includes(jk)) keys.push(jk);
+    }
+    return keys;
+  }).catch(() => [] as string[]);
+
+  if (fromDataJk.length > 0) return fromDataJk;
+
+  return page.$$eval('a[href*="jk="]', (links) => {
+    const keys: string[] = [];
+    for (const link of links) {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/[?&]jk=([a-f0-9]+)/i);
+      if (match && !keys.includes(match[1])) keys.push(match[1]);
+    }
+    return keys;
+  }).catch(() => [] as string[]);
+}
+
+/**
+ * Busca vagas no Indeed Brasil com filtro de trabalho remoto.
+ * Usa paginação (10 vagas/página) e respeita limites anti-bot.
+ */
+export async function searchIndeedJobs(query: string): Promise<string[]> {
+  const maxResults = getMaxIndeedResults();
+  let browser: Browser | undefined;
+
+  try {
+    browser = await chromium.launch({ headless: true, args: BROWSER_ARGS });
+    const context: BrowserContext = await browser.newContext({
+      userAgent: USER_AGENT,
+      viewport: { width: 1920, height: 1080 },
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo',
+      extraHTTPHeaders: {
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+    });
+
+    const page = await context.newPage();
+    const allKeys = new Set<string>();
+    let consecutiveEmpty = 0;
+
+    try {
+      for (let start = 0; start < maxResults; start += PAGE_SIZE) {
+        const url = buildIndeedSearchUrl(query, start);
+
+        try {
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.waitForTimeout(randomDelay(1000));
+        } catch {
+          consecutiveEmpty++;
+          if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY) break;
+          await page.waitForTimeout(randomDelay(2000));
+          continue;
+        }
+
+        const blocked = await page.evaluate(() => {
+          const body = document.body?.innerText?.toLowerCase() || '';
+          return body.includes('não é um robô') ||
+                 body.includes('not a robot') ||
+                 body.includes('unusual traffic');
+        }).catch(() => false);
+
+        if (blocked) {
+          console.log('  ⚠️  Indeed detectou automação (CAPTCHA). Interrompendo busca Indeed.');
+          break;
+        }
+
+        const pageKeys = await extractIndeedJobKeys(page);
+        const sizeBefore = allKeys.size;
+        for (const key of pageKeys) allKeys.add(key);
+        const newCount = allKeys.size - sizeBefore;
+
+        if (pageKeys.length === 0 || newCount === 0) {
+          consecutiveEmpty++;
+          if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY) break;
+        } else {
+          consecutiveEmpty = 0;
+        }
+
+        if (start > 0 && start % 50 === 0) {
+          console.log(`  📄 Indeed: ${allKeys.size} vagas coletadas (start=${start})`);
+        }
+
+        await page.waitForTimeout(randomDelay(REQUEST_DELAY_MS));
+      }
+    } finally {
+      await page.close().catch(() => undefined);
+    }
+
+    const jobKeys = Array.from(allKeys);
+    console.log(`  📄 Indeed: ${jobKeys.length} vagas únicas encontradas.`);
+    return jobKeys.map((key) => `${INDEED_BASE_URL}/viewjob?jk=${key}`);
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => undefined);
+    }
+  }
+}
+
+if (require.main === module) {
+  require('dotenv/config');
+  const queryFromArgs = process.argv.slice(2).join(' ').trim();
+
+  if (!queryFromArgs) {
+    console.error('Uso: ts-node src/indeed-search.ts "<QUERY_DE_BUSCA>"');
+    process.exit(1);
+  }
+
+  searchIndeedJobs(queryFromArgs)
+    .then((urls) => {
+      console.log(JSON.stringify(urls, null, 2));
+      console.log(`Encontradas ${urls.length} vagas no Indeed.`);
+    })
+    .catch((err) => {
+      console.error('Erro ao buscar vagas no Indeed:', err);
+      process.exit(1);
+    });
+}

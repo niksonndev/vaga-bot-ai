@@ -11,9 +11,108 @@ export interface JobData {
 const LINKEDIN_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
+function isIndeedUrl(url: string): boolean {
+  return url.includes('indeed.com');
+}
+
+async function scrapeLinkedInJob(page: Page, url: string): Promise<JobData> {
+  await page.goto(url, { waitUntil: 'networkidle' });
+  await page.waitForSelector('h1.top-card-layout__title');
+
+  const rawTitle = await page.textContent('h1.top-card-layout__title');
+  const rawCompany = await page.textContent('a.topcard__org-name-link');
+  const rawLocation = await page.textContent('span.topcard__flavor--bullet');
+  const rawDescription = await page.evaluate(() => {
+    const el = document.querySelector('div.description__text');
+    return el ? (el as HTMLElement).innerText : '';
+  });
+
+  return {
+    title: rawTitle?.trim() ?? '',
+    company: rawCompany?.trim() ?? '',
+    location: rawLocation?.trim() ?? '',
+    description:
+      rawDescription
+        ?.replace(/\s*Show more\s*/gi, '')
+        .replace(/\s*Show less\s*/gi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim() ?? '',
+    url,
+  };
+}
+
+async function scrapeIndeedJob(page: Page, url: string): Promise<JobData> {
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+  try {
+    await page.waitForSelector('h1, [data-testid="jobsearch-JobInfoHeader-title"]', { timeout: 15000 });
+  } catch { /* proceed anyway */ }
+
+  const rawTitle = await page.evaluate(() => {
+    const selectors = [
+      'h1.jobsearch-JobInfoHeader-title',
+      '[data-testid="jobsearch-JobInfoHeader-title"]',
+      'h2.jobTitle',
+      'h1',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el?.textContent?.trim()) return el.textContent.trim();
+    }
+    return '';
+  });
+
+  const rawCompany = await page.evaluate(() => {
+    const selectors = [
+      '[data-testid="inlineHeader-companyName"] a',
+      '[data-testid="inlineHeader-companyName"]',
+      'div.jobsearch-InlineCompanyRating a',
+      '[data-company-name="true"]',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el?.textContent?.trim()) return el.textContent.trim();
+    }
+    return '';
+  });
+
+  const rawLocation = await page.evaluate(() => {
+    const selectors = [
+      '[data-testid="inlineHeader-companyLocation"]',
+      '[data-testid="job-location"]',
+      'div.jobsearch-InlineCompanyRating + div',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el?.textContent?.trim()) return el.textContent.trim();
+    }
+    return '';
+  });
+
+  const rawDescription = await page.evaluate(() => {
+    const selectors = [
+      '#jobDescriptionText',
+      'div.jobsearch-jobDescriptionText',
+      'div.jobsearch-JobComponent-description',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) return (el as HTMLElement).innerText;
+    }
+    return '';
+  });
+
+  return {
+    title: rawTitle?.trim() ?? '',
+    company: rawCompany?.trim() ?? '',
+    location: rawLocation?.trim() ?? '',
+    description: rawDescription?.replace(/\n{3,}/g, '\n\n').trim() ?? '',
+    url,
+  };
+}
+
 /**
- * Faz o scraping de uma vaga específica do LinkedIn, recebendo apenas a URL da vaga.
- * Não faz busca/listagem, apenas extrai os campos relevantes da página.
+ * Faz o scraping de uma vaga, detectando automaticamente a fonte (LinkedIn ou Indeed).
  */
 export async function scrapeJob(url: string): Promise<JobData> {
   let browser: Browser | undefined;
@@ -29,38 +128,13 @@ export async function scrapeJob(url: string): Promise<JobData> {
     });
 
     page = await context.newPage();
-    await page.goto(url, { waitUntil: 'networkidle' });
 
-    // Aguarda o elemento crítico carregar
-    await page.waitForSelector('h1.top-card-layout__title');
+    if (isIndeedUrl(url)) {
+      return await scrapeIndeedJob(page, url);
+    }
 
-    const rawTitle = await page.textContent('h1.top-card-layout__title');
-    const rawCompany = await page.textContent('a.topcard__org-name-link');
-    const rawLocation = await page.textContent('span.topcard__flavor--bullet');
-    const rawDescription = await page.evaluate(() => {
-      const el = document.querySelector('div.description__text');
-      return el ? (el as HTMLElement).innerText : '';
-    });
-
-    const title = rawTitle?.trim() ?? '';
-    const company = rawCompany?.trim() ?? '';
-    const location = rawLocation?.trim() ?? '';
-    const description =
-      rawDescription
-        ?.replace(/\s*Show more\s*/gi, '')
-        .replace(/\s*Show less\s*/gi, '')
-        .replace(/\n{3,}/g, '\n\n') // colapsa linhas em branco excessivas
-        .trim() ?? '';
-
-    return {
-      title,
-      company,
-      location,
-      description,
-      url,
-    };
+    return await scrapeLinkedInJob(page, url);
   } finally {
-    // Garante que os recursos sejam liberados mesmo em caso de erro.
     if (page) {
       await page.close().catch(() => undefined);
     }
