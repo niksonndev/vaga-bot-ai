@@ -9,6 +9,7 @@ import { analyzeJob } from './analyzer';
 import { filterJob } from './filter';
 import { searchJobs, SEARCH_KEYWORDS, SearchCategory } from './search';
 import { hasJobUrl, saveJobUrl, saveJobDetails } from './storage';
+import { appendJobToSheet, isSheetsEnabled } from './sheets';
 
 const requiredEnvVars = ['OPENAI_API_KEY'] as const;
 
@@ -64,6 +65,14 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
       }
 
       saveJobDetails(job.url, job, analysis);
+      if (isSheetsEnabled()) {
+        try {
+          await appendJobToSheet(job, analysis);
+          console.log('📄 Vaga registrada no Google Sheets.');
+        } catch (err) {
+          console.error('⚠️ Falha ao registrar vaga no Google Sheets. Seguindo fluxo.', err);
+        }
+      }
 
       // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
       // console.log('✍️  Adaptando currículo...');
@@ -158,6 +167,14 @@ async function main() {
 
     saveJobUrl(job.url);
     saveJobDetails(job.url, job, analysis);
+    if (isSheetsEnabled()) {
+      try {
+        await appendJobToSheet(job, analysis);
+        console.log('📄 Vaga registrada no Google Sheets.');
+      } catch (err) {
+        console.error('⚠️ Falha ao registrar vaga no Google Sheets. Seguindo fluxo.', err);
+      }
+    }
 
     // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
     // console.log('✍️  Adaptando currículo...');
