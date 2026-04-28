@@ -4,7 +4,7 @@
 
 ### Overview
 
-VagaBot AI is a CLI-based AI job application agent (Node.js + TypeScript). It scrapes LinkedIn job postings via Playwright, analyzes resume compatibility via OpenAI, and generates ATS-optimized resumes. No web server, no Docker, no microservices.
+Job Hunter AI is a CLI-based AI job application agent (Node.js + TypeScript). It scrapes LinkedIn job postings via Playwright, analyzes resume compatibility via OpenAI, and generates ATS-optimized resumes. No web server, no Docker, no microservices.
 
 ### Key commands
 

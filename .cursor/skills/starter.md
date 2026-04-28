@@ -1,6 +1,6 @@
-# VagaBot AI — Cloud Agent Starter Skill
+# Job Hunter AI — Cloud Agent Starter Skill
 
-Use this skill whenever you need to set up, run, test, or debug the VagaBot AI codebase inside a Cursor Cloud agent environment.
+Use this skill whenever you need to set up, run, test, or debug the Job Hunter AI codebase inside a Cursor Cloud agent environment.
 
 ---
 
