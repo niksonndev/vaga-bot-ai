@@ -1,12 +1,12 @@
 import 'dotenv/config';
 
 import { scrapeJob } from './scraper';
-import { analyzeJob } from './analyzer';
+import { analyzeJob, AnalysisResult } from './analyzer';
 // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
 // import { adaptResume } from './adapter';
 // composeEmail é opcional; atualmente não é usado no fluxo principal
 // import { composeEmail } from './composer';
-import { filterJob } from './filter';
+import { filterJob, FilterResult } from './filter';
 import { searchJobs, SEARCH_KEYWORDS, SearchCategory } from './search';
 import { hasJobUrl, saveJobUrl, saveJobDetails } from './storage';
 import { appendJobToSheet, isSheetsEnabled } from './sheets';
@@ -27,15 +27,14 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
   const urls = typeof limit === 'number' ? allUrls.slice(0, limit) : allUrls;
 
   console.log(
-    `🔗 ${allUrls.length} URLs encontradas. Serão processadas ${urls.length} vaga(s)${
-      limit ? ` (limite configurado: ${limit})` : ''
+    `🔗 ${allUrls.length} URLs encontradas. Serão processadas ${urls.length} vaga(s)${limit ? ` (limite configurado: ${limit})` : ''
     }.`,
   );
 
   for (const url of urls) {
     try {
       if (hasJobUrl(url)) {
-        console.log(`⏭️  Vaga já processada (URL existente), pulando: ${url}`);
+        console.log(`⏭️ Vaga já processada (URL existente), pulando: ${url}`);
         continue;
       }
 
@@ -43,31 +42,31 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
 
       const job = await scrapeJob(url);
 
-      const filter = filterJob(job);
-      if (!filter.passed) {
-        console.log(`🚫 Filtrada: ${filter.reason} — pulando.`);
+      const filterResult = filterJob(job);
+      if (!filterResult.passed) {
+        console.log(`🚫 Filtrada: ${filterResult.reason} — pulando.`);
         continue;
       }
 
       console.log('📊 Analisando compatibilidade...');
-      const analysis = await analyzeJob(job);
+      const analysisResult = await analyzeJob(job) as AnalysisResult;
 
-      if (!analysis.relevant) {
-        console.log(`⚠️  Vaga não relevante (category: ${analysis.category}) — pulando.`);
+      if (!analysisResult.relevant) {
+        console.log(`⚠️ Vaga não relevante (category: ${analysisResult.category}) — pulando.`);
         continue;
       }
 
       const inserted = saveJobUrl(job.url);
       if (!inserted) {
         // Em caso de corrida, não atualizamos detalhes: regra "não reprocessar se URL existe".
-        console.log(`⏭️  Vaga já inserida durante a análise, pulando: ${url}`);
+        console.log(`⏭️ Vaga já inserida durante a análise, pulando: ${url}`);
         continue;
       }
 
-      saveJobDetails(job.url, job, analysis);
+      saveJobDetails(job.url, job, analysisResult);
       if (isSheetsEnabled()) {
         try {
-          await appendJobToSheet(job, analysis);
+          await appendJobToSheet(job, analysisResult);
           console.log('📄 Vaga registrada no Google Sheets.');
         } catch (err) {
           console.error('⚠️ Falha ao registrar vaga no Google Sheets. Seguindo fluxo.', err);
@@ -75,13 +74,13 @@ async function processSearchQuery(rawQuery: string, limit?: number) {
       }
 
       // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
-      // console.log('✍️  Adaptando currículo...');
-      // await adaptResume(job, analysis);
+      // console.log('✍️ Adaptando currículo...');
+      // await adaptResume(job, analysisResult);
 
       console.log('✅ Vaga processada com sucesso!', {
         title: job.title,
         company: job.company,
-        category: analysis.category,
+        category: analysisResult.category,
         url: job.url,
       });
     } catch (err: any) {
@@ -108,7 +107,7 @@ async function main() {
 
     const categories = Object.keys(SEARCH_KEYWORDS) as SearchCategory[];
     for (const category of categories) {
-      console.log(`\n🏷️  Categoria: ${category}`);
+      console.log(`\n🏷️ Categoria: ${category}`);
       const keywords = SEARCH_KEYWORDS[category];
       for (const [key, label] of Object.entries(keywords)) {
         console.log('\n==================================================');
@@ -131,7 +130,7 @@ async function main() {
         ? Math.floor(Number(defaultLimitEnv))
         : undefined;
 
-    console.log(`🏷️  Rodando categoria: ${matchedCategory}`);
+    console.log(`🏷️ Rodando categoria: ${matchedCategory}`);
     const keywords = SEARCH_KEYWORDS[matchedCategory];
     for (const [key, label] of Object.entries(keywords)) {
       console.log('\n==================================================');
@@ -151,25 +150,25 @@ async function main() {
     console.log('🔍 Buscando vaga única...');
     const job = await scrapeJob(jobUrl);
 
-    const filter = filterJob(job);
-    if (!filter.passed) {
-      console.log(`🚫 Filtrada: ${filter.reason} — encerrando.`);
+    const filterResult = filterJob(job);
+    if (!filterResult.passed) {
+      console.log(`🚫 Filtrada: ${filterResult.reason} — encerrando.`);
       return;
     }
 
     console.log('📊 Analisando compatibilidade...');
-    const analysis = await analyzeJob(job);
+    const analysisResult = await analyzeJob(job) as AnalysisResult;
 
-    if (!analysis.relevant) {
-      console.log(`⚠️  Vaga não relevante (category: ${analysis.category}) — encerrando.`);
+    if (!analysisResult.relevant) {
+      console.log(`⚠️ Vaga não relevante (category: ${analysisResult.category}) — encerrando.`);
       return;
     }
 
     saveJobUrl(job.url);
-    saveJobDetails(job.url, job, analysis);
+    saveJobDetails(job.url, job, analysisResult);
     if (isSheetsEnabled()) {
       try {
-        await appendJobToSheet(job, analysis);
+        await appendJobToSheet(job, analysisResult);
         console.log('📄 Vaga registrada no Google Sheets.');
       } catch (err) {
         console.error('⚠️ Falha ao registrar vaga no Google Sheets. Seguindo fluxo.', err);
@@ -177,8 +176,8 @@ async function main() {
     }
 
     // adaptResume desabilitado temporariamente para reduzir custos com OpenAI
-    // console.log('✍️  Adaptando currículo...');
-    // await adaptResume(job, analysis);
+    // console.log('✍️ Adaptando currículo...');
+    // await adaptResume(job, analysisResult);
 
     console.log('✅ Concluído!');
     console.log('Resumo:', {
@@ -188,7 +187,7 @@ async function main() {
         location: job.location,
         url: job.url,
       },
-      analysis,
+      analysis: analysisResult,
     });
     return;
   }
